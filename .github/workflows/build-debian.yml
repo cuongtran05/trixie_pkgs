@@ -1,0 +1,79 @@
+name: Build Debian Trixie Package with sbuild
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  sbuild-trixie:
+    runs-on: ubuntu-latest
+
+    steps:
+    # Bước 0: Dọn dẹp ổ cứng máy ảo (Xóa Android, .NET, Haskell... để giải phóng >50GB trống)
+    - name: Free Disk Space (Ubuntu)
+      uses: jlumbroso/free-disk-space@v1.3.1
+      with:
+        tool-cache: true      # Xóa bộ nhớ đệm công cụ của GitHub
+        android: true         # Xóa hoàn toàn Android SDK (~14GB)
+        dotnet: true          # Xóa .NET Runtime (~2GB)
+        haskell: true         # Xóa môi trường Haskell
+        swap: false           # Giữ lại SWAP mặc định để hỗ trợ RAM
+
+    # Bước 1: Tải mã nguồn từ kho lưu trữ về máy ảo
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # Bước 2: Cài đặt sbuild và các công cụ tạo chroot cần thiết
+    - name: Install sbuild and dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y sbuild mmdebstrap uidmap
+
+    # Bước 3: Cấu hình sbuild chạy ở chế độ unshare (không cần quyền root)
+    - name: Configure sbuild (unshare mode)
+      run: |
+        sudo sbuild-adduser $USER
+        mkdir -p ~/.config/sbuild
+        cat <<EOF > ~/.config/sbuild/config
+        \$chroot_mode = 'unshare';
+        \$build_environment = { 'LC_ALL' => 'C.UTF-8' };
+        EOF
+
+    # Bước 4: Tự động lưu và tải lại môi trường chroot để tiết kiệm thời gian build
+    - name: Cache sbuild chroot for Trixie
+      id: cache-sbuild
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/sbuild
+        key: sbuild-chroot-trixie-amd64
+
+    # Bước 5: Tạo môi trường chroot Debian Trixie (chỉ chạy nếu chưa có cache)
+    - name: Create sbuild chroot for Debian Trixie
+      if: steps.cache-sbuild.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p ~/.cache/sbuild
+        mmdebstrap --variant=buildd trixie ~/.cache/sbuild/trixie-amd64.tar.gz
+
+    # Bước 6: Tạo source package (.dsc) từ thư mục debian/ của dự án
+    - name: Build Source Package
+      run: |
+        dpkg-buildpackage -S -us -uc -d
+
+    # Bước 7: Tiến hành build gói chính thức bằng sbuild cho Debian Trixie
+    - name: Run sbuild for Trixie
+      run: |
+        sbuild --dist=trixie --arch=amd64 ../*.dsc
+
+    # Bước 8: Lưu trữ file .deb thành phẩm lên GitHub Actions
+    - name: Upload Artifacts
+      uses: actions/artifacts@v4
+      with:
+        name: debian-trixie-packages
+        path: |
+          ../*.deb
+          ../*.changes
+          ../*.buildinfo
+

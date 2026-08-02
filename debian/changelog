@@ -1,0 +1,5 @@
+my-dummy-package (1.0.0-1) trixie; urgency=medium
+
+  * Initial release of a dummy package for testing sbuild.
+
+ -- Cường Trần <cuongtran05@github.com>  Sun, 02 Aug 2026 12:00:00 +0700

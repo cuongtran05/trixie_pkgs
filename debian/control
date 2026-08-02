@@ -1,0 +1,12 @@
+Source: my-dummy-package
+Section: utils
+Priority: optional
+Maintainer: Cường Trần <cuongtran05@github.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+
+Package: my-dummy-package
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Dummy package for testing GitHub Actions
+ This is a sample package built on GitHub Actions using sbuild for Debian Trixie.
