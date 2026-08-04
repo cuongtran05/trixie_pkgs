@@ -16,14 +16,6 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # BƯỚC DEBUG: Tìm kiếm toàn bộ file chứa chuỗi lỗi trong repository
-    - name: Debug and Find Bad URL Location
-      run: |
-        echo "=== BẮT ĐẦU QUÉT FILE CHỨA WWW.DEBIAN.ORG ==="
-        grep -rnw "." -e "www.debian.org" || echo "Không tìm thấy trong code thường."
-        echo "=== BẮT ĐẦU QUÉT FILE TRONG THƯ MỤC DEBIAN ==="
-        grep -rnw "debian/" -e "www.debian.org" || echo "Không tìm thấy trong thư mục debian."
-
     - name: Load JSON and Set Output
       id: set-matrix
       run: |
@@ -55,17 +47,24 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # Bước 2: Cài đặt sbuild, các công cụ đóng gói và thêm kho lưu trữ Debian Trixie ngoài máy ảo host
+    # Bước 2: Cài đặt sbuild, công cụ đóng gói và ép cấu hình APT Trixie chuẩn
     - name: Install sbuild and dependencies
       run: |
+        # 1. Cài đặt các công cụ cơ bản ban đầu
         sudo apt-get update
         sudo apt-get install -y sbuild mmdebstrap uidmap dpkg-dev debian-archive-keyring debhelper devscripts jq
         
-        # Thêm kho lưu trữ Debian Trixie mở rộng đầy đủ thành phần
-        echo "deb http://debian.org trixie main contrib non-free non-free-firmware" | sudo tee /etc/apt/sources.list.d/debian-trixie.list
+        # 2. VÔ HIỆU HÓA MIRRORLIST: Xóa bỏ tệp cấu hình gây tự động chuyển hướng URL lỗi trên máy Actions
+        sudo rm -f /etc/apt/apt-mirrors.txt
+        sudo rm -f /etc/apt/sources.list.d/debian-trixie.list
         
-        # SỬA TẠI ĐÂY: Thêm cờ [allow-insecure=yes] và [allow-unauthenticated=yes] để cho phép APT nạp danh sách gói trước khi có khóa
+        # 3. Ghi kho lưu trữ chuẩn với đường dẫn đầy đủ /debian (Tuyệt đối không dùng debian.org trống)
+        echo "deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware" | sudo tee /etc/apt/sources.list.d/debian-trixie.list
+        
+        # 4. Thực thi cập nhật độc lập để hàm dch_version đọc dữ liệu mượt mà
         sudo apt-get update -o Dir::Etc::preferences=/dev/null \
+                            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/debian-trixie.list \
+                            -o Dir::Etc::sourceparts=/dev/null \
                             -o Acquire::AllowInsecureRepositories=true \
                             -o Acquire::AllowDowngradeToInsecureRepositories=true \
                             --allow-unauthenticated
