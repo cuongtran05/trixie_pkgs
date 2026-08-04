@@ -112,15 +112,19 @@ jobs:
         dpkg-buildpackage -S -us -uc -d
 
     # Bước 8: Tiến hành build gói chính thức bằng sbuild trên máy ảo này
-    # Giải pháp tối giản: Dùng symlink chuẩn và chạy sbuild trực tiếp thông qua sg
+    # Chỉ định đích danh file .dsc theo tên gói lấy từ ma trận JSON để tránh lỗi "Only one build is permitted"
     - name: Run sbuild for Trixie
       run: |
         # 1. Tạo thư mục cache và liên kết mềm (Symlink) chuẩn tên cho sbuild unshare
         mkdir -p ~/.cache/sbuild
         ln -sf ~/.cache/sbuild/trixie-amd64.tar.gz ~/.cache/sbuild/trixie-amd64-sbuild.tar.gz
         
-        # 2. Thực thi sbuild trực tiếp, lấy biến matrix.chroot_setup bằng dấu nháy kép của GitHub Actions
-        sg sbuild -c "sbuild --dist=trixie --arch=amd64 --chroot-setup-commands='${{ matrix.chroot_setup }}' ../*.dsc"
+        # 2. Lấy tên gói nguồn từ ma trận JSON để định danh file .dsc chính xác
+        # Tìm file có cấu trúc tên_gói_nguồn_*.dsc ở thư mục cha và lưu vào biến
+        DSC_FILE=$(ls ../${{ matrix.source }}_*.dsc 2>/dev/null | head -n 1)
+        
+        # 3. Thực thi sbuild trực tiếp với file .dsc cụ thể
+        sg sbuild -c "sbuild --dist=trixie --arch=amd64 --chroot-setup-commands='${{ matrix.chroot_setup }}' \$DSC_FILE"
 
     # Bước 9: Thu gom file thành phẩm của gói này ra một thư mục riêng để chuẩn bị upload
     - name: Prepare Artifacts Directory
