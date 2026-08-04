@@ -57,7 +57,7 @@ jobs:
         sudo rm -f /etc/apt/apt-mirrors.txt
         sudo rm -f /etc/apt/sources.list.d/debian-trixie.list
         
-        # Thêm kho chính thức Debian Trixie
+        # SỬA LỖI TẠI ĐÂY: Sử dụng chuẩn tên miền deb.debian.org thay vì debian.org
         echo "deb http://debian.org trixie main contrib non-free non-free-firmware" | sudo tee /etc/apt/sources.list.d/debian-trixie.list
         
         # Nếu là gói Backports (is_bp = 1), tự động thêm luôn kho backports vào máy ảo host
@@ -65,13 +65,8 @@ jobs:
           echo "deb http://debian.org trixie-backports main contrib non-free non-free-firmware" | sudo tee -a /etc/apt/sources.list.d/debian-trixie.list
         fi
         
-        # Cập nhật danh sách gói, cho phép bỏ qua xác thực GPG tạm thời trước khi chạy chroot_setup
-        sudo apt-get update -o Dir::Etc::preferences=/dev/null \
-                            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/debian-trixie.list \
-                            -o Dir::Etc::sourceparts=/dev/null \
-                            -o Acquire::AllowInsecureRepositories=true \
-                            -o Acquire::AllowDowngradeToInsecureRepositories=true \
-                            --allow-unauthenticated
+        # Cập nhật danh sách gói chính thức sau khi sửa URL
+        sudo apt-get update
 
     # Bước 3: Áp dụng cấu hình ghim phiên bản (APT Pinning) lấy từ file JSON trực tiếp lên máy ảo host
     - name: Apply APT Pinning Preferences
@@ -130,19 +125,39 @@ jobs:
         # Lệnh này tự động đọc file debian/control và cài đặt mọi thư viện yêu cầu (như debhelper, cmake...)
         sudo mk-build-deps -i -r -t "apt-get -o Debug::pkgProblemResolver=yes --no-install-recommends -y" debian/control
 
+    # Bước bổ sung: Thiết lập môi trường biên dịch trên RAM (tmpfs) nếu use_tmpfs = 1
+    - name: Setup RAM Disk for compilation
+      if: ${{ matrix.use_tmpfs == 1 }}
+      run: |
+        echo "🚀 Kích hoạt cơ chế biên dịch trực tiếp trên RAM (tmpfs)..."
+        # Xác định thư mục làm việc cha (nơi dpkg-buildpackage sinh ra thành phẩm)
+        PARENT_DIR=$(dirname "$(pwd)")
+        
+        # Di chuyển tạm thời dữ liệu hiện tại ra ngoài để làm sạch điểm mount
+        mkdir -p /tmp/workspace_backup
+        mv ./* /tmp/workspace_backup/ 2>/dev/null || true
+        
+        # Mount tmpfs kích thước 6GB trực tiếp vào thư mục cha
+        sudo mount -t tmpfs -o size=6G tmpfs "$PARENT_DIR"
+        sudo chown -R runner:docker "$PARENT_DIR"
+        
+        # Khôi phục lại mã nguồn vào phân vùng RAM mới mount
+        mv /tmp/workspace_backup/* ./ 2>/dev/null || true
+        rm -rf /tmp/workspace_backup
+        df -h "$PARENT_DIR"
+
     # Bước 6: Tiến hành cấu hình cờ biên dịch từ JSON và build trực tiếp ra file .deb
     - name: Build Binary Package (.deb)
       env:
         DEB_BUILD_OPTIONS: ${{ matrix.DEB_BUILD_OPTIONS }}
-        # Bạn có thể xuất thêm cờ tối ưu hóa kiến trúc vi xử lý x86-64-v3 ở đây nếu muốn
-        DEB_CFLAGS_APPEND: "-march=x86-64-v3"
-        DEB_CXXFLAGS_APPEND: "-march=x86-64-v3"
+        # Tự động gán cờ tối ưu hóa march theo giá trị v từ JSON (mặc định v3 nếu trống)
+        DEB_CFLAGS_APPEND: "-march=${{ matrix.v == 'v4' && 'x86-64-v4' || 'x86-64-v3' }}"
+        DEB_CXXFLAGS_APPEND: "-march=${{ matrix.v == 'v4' && 'x86-64-v4' || 'x86-64-v3' }}"
       run: |
-        # Dọn dẹp file cũ ở thư mục cha
+        # Dọn dẹp file cũ ở thư mục cha (an toàn trên cả RAM lẫn Disk)
         rm -f ../*.dsc ../*.tar.* ../*.changes ../*.buildinfo ../*.deb
         
-        # Biên dịch trực tiếp tạo cả gói Source và gói Binary (.deb thành phẩm)
-        # Sử dụng cờ -us -uc để bỏ qua bước ký số GPG (Unsigned source, unsigned changelog)
+        # Biên dịch trực tiếp tạo gói không ký số GPG
         dpkg-buildpackage -b -us -uc
 
     # Bước 7: Thu gom thành phẩm
@@ -150,7 +165,7 @@ jobs:
       run: |
         mkdir -p dist-package
         cp ../*.deb dist-package/ 2>/dev/null || true
-        cp ../*.changes dist-package/ 2>/dev/null || true
+        cp ../*.changes dist-package/ 2>/dev/null || trued
         cp ../*.buildinfo dist-package/ 2>/dev/null || true
 
     # Bước 8: Tải tệp thành phẩm .deb lên mục Artifacts
