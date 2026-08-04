@@ -1,3 +1,15 @@
 #!/usr/bin/make -f
+
+# Ép hệ thống xuất các biến môi trường biên dịch (như CFLAGS, CXXFLAGS, LDFLAGS) 
+# ra để các công cụ như gcc/g++ hoặc cmake bên dưới có thể đọc được ngay lập tức
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
 %:
 	dh $@
+
+# Hook bổ sung: Nếu dự án của bạn sử dụng hệ thống CMake để build,
+# cấu trúc này đảm bảo các cờ tối ưu hóa như -O2, -O3 sẽ được nạp chính xác vào hệ thống
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DCMAKE_BUILD_TYPE=None \
+		-DCMAKE_INSTALL_PREFIX=/usr

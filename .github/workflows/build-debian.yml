@@ -106,22 +106,53 @@ jobs:
                    --keyring=/usr/share/keyrings/debian-archive-keyring.gpg \
                    trixie ~/.cache/sbuild/trixie-amd64.tar.gz
 
-    # Bước 7: Tạo source package (.dsc) từ thư mục debian/ của dự án
+    # Bước 7: Tự động tạo debian/control + debian/changelog động và build Source Package (.dsc)
     - name: Build Source Package
       run: |
+        # 1. Xóa sạch các file cũ ở thư mục cha để tránh lỗi "Only one build is permitted"
+        rm -f ../*.dsc ../*.tar.* ../*.changes ../*.buildinfo ../*.deb
+        
+        # 2. Tạo file debian/control động theo tên gói trong Ma trận JSON
+        cat << EOF > debian/control
+        Source: ${{ matrix.source }}
+        Section: utils
+        Priority: optional
+        Maintainer: Cường Trần <cuongtran05@github.com>
+        Build-Depends: debhelper-compat (= 13)
+        Standards-Version: 4.6.2
+
+        Package: ${{ matrix.name }}
+        Architecture: any
+        Depends: \${shlibs:Depends}, \${misc:Depends}
+        Description: Dynamic package built on GitHub Actions
+         This is an automated package for ${{ matrix.name }} built using sbuild for Debian Trixie.
+        EOF
+
+        # 3. Lấy thời gian hiện tại theo định dạng chuẩn RFC 5322 của Debian Changelog
+        DEB_DATE=$(date -R)
+
+        # 4. Tạo file debian/changelog động theo tên gói và phiên bản từ JSON
+        cat << EOF > debian/changelog
+        ${{ matrix.source }} (${{ matrix.v }}-1ct05v) trixie; urgency=medium
+
+          * Automated build for ${{ matrix.name }} from JSON matrix config.
+
+         -- Cường Trần <cuongtran05@github.com>  $DEB_DATE
+        EOF
+        
+        # 5. Tiến hành tạo source package mới sạch sẽ
         dpkg-buildpackage -S -us -uc -d
 
     # Bước 8: Tiến hành build gói chính thức bằng sbuild trên máy ảo này
-    # Đưa lệnh gán biến DSC_FILE vào bên trong cặp dấu nháy kép của sg để tránh mất phạm vi biến
     - name: Run sbuild for Trixie
       run: |
         # 1. Tạo thư mục cache và liên kết mềm (Symlink) chuẩn tên cho sbuild unshare
         mkdir -p ~/.cache/sbuild
         ln -sf ~/.cache/sbuild/trixie-amd64.tar.gz ~/.cache/sbuild/trixie-amd64-sbuild.tar.gz
         
-        # 2. Thực thi sbuild trực tiếp, lệnh ghim phiên bản lấy từ matrix.chroot_setup
-        # Biến DSC_FILE được tìm kiếm và thực thi trực tiếp bên trong môi trường sg sbuild
-        sg sbuild -c "DSC_FILE=\$(ls ../${{ matrix.source }}_*.dsc 2>/dev/null | head -n 1) && sbuild --dist=trixie --arch=amd64 --chroot-setup-commands='${{ matrix.chroot_setup }}' \$DSC_FILE"
+        # 2. Thực thi sbuild trực tiếp. Vì thư mục cha đã được dọn sạch ở Bước 7, 
+        # lúc này ../*.dsc chỉ chứa duy nhất 1 file nguồn vừa tạo, an toàn 100% không lo lỗi trùng lặp.
+        sg sbuild -c "sbuild --dist=trixie --arch=amd64 --chroot-setup-commands='${{ matrix.chroot_setup }}' ../*.dsc"
 
     # Bước 9: Thu gom file thành phẩm của gói này ra một thư mục riêng để chuẩn bị upload
     - name: Prepare Artifacts Directory
