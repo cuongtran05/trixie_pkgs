@@ -109,13 +109,17 @@ jobs:
         dpkg-buildpackage -S -us -uc -d
 
     # Bước 8: Tiến hành build gói chính thức bằng sbuild trên máy ảo này
-    # Sử dụng lệnh 'sg sbuild -c' để ép shell nhận diện quyền nhóm sbuild ngay lập tức
+    # Ghi lệnh vào file tạm để tránh lỗi lồng dấu nháy (Quoted string error)
     - name: Run sbuild for Trixie
       run: |
-        sg sbuild -c 'sbuild --dist=trixie \
+        cat << 'EOF' > run_sbuild.sh
+        sbuild --dist=trixie \
                --arch=amd64 \
                --chroot-setup-commands="${{ matrix.chroot_setup }}" \
-               ../*.dsc'
+               ../*.dsc
+        EOF
+        chmod +x run_sbuild.sh
+        sg sbuild -c './run_sbuild.sh'
 
     # Bước 9: Thu gom file thành phẩm của gói này ra một thư mục riêng để chuẩn bị upload
     - name: Prepare Artifacts Directory
