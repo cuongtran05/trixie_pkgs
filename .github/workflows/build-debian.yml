@@ -67,13 +67,12 @@ jobs:
       run: |
         sbuild --dist=trixie --arch=amd64 ../*.dsc
 
-    # Bước 8: Lưu trữ file .deb thành phẩm lên GitHub Actions
+    # Bước 8: Lưu trữ file .deb thành phẩm lên GitHub Actions (Đã sửa lỗi)
     - name: Upload Artifacts
-      uses: actions/artifacts@v4
+      uses: actions/upload-artifact@v4
       with:
         name: debian-trixie-packages
         path: |
           ../*.deb
           ../*.changes
           ../*.buildinfo
-
