@@ -167,29 +167,26 @@ jobs:
     # Bước 8: Biên dịch gói bằng sbuild kết hợp sinh câu lệnh gán Repo Backports tự động
     - name: Run sbuild for Trixie
       env:
-        CHROOT_SETUP_JSON: ${{ matrix.chroot_setup }}
         IS_BP_VAL: ${{ matrix.is_bp }}
       run: |
         # 1. Đồng bộ cấu trúc Symlink bắt buộc cho sbuild unshare
         mkdir -p ~/.cache/sbuild
         ln -sf ~/.cache/sbuild/trixie-amd64.tar.gz ~/.cache/sbuild/trixie-amd64-sbuild.tar.gz
         
-        # 2. Xây dựng chuỗi tham số --chroot-setup-commands động dựa theo trạng thái Backports ngoài shell cha
-        export FINAL_SETUP_CMD="$CHROOT_SETUP_JSON"
-        
+        # 2. Xử lý chuỗi lệnh Backports bổ sung nếu điều kiện kích hoạt
+        BP_REPO_CMD=""
         if [ "$IS_BP_VAL" -eq 1 ]; then
-            BP_REPO_CMD="echo 'deb http://deb.debian.org/debian/ trixie-backports main contrib non-free non-free-firmware' > /etc/apt/sources.list.d/trixie-backports.list && apt-get update"
-            export FINAL_SETUP_CMD="$FINAL_SETUP_CMD && $BP_REPO_CMD"
+            BP_REPO_CMD=" && echo 'deb http://deb.debian.org/debian/ trixie-backports main contrib non-free non-free-firmware' > /etc/apt/sources.list.d/trixie-backports.list && apt-get update"
         fi
         
-        # 3. SỬA TẠI ĐÂY: Dùng 'EOF' nháy đơn để bảo vệ chuỗi ký tự, ngăn chặn lỗi vỡ cấu trúc do ký tự \n gây ra
-        cat << 'EOF' > execute_sbuild.sh
+        # 3. Tạo file script bằng cách đổ trực tiếp cấu hình ma trận JSON của GitHub Actions vào.
+        # Sử dụng dấu gạch chéo ngược \ trước dấu sao của file nguồn đằng sau để giữ nguyên định dạng tệp tin.
+        cat << EOF > execute_sbuild.sh
         #!/bin/bash
-        # Gọi biến môi trường FINAL_SETUP_CMD đã được export một cách an toàn
         sbuild --dist=trixie \
                --arch=amd64 \
-               --chroot-setup-commands="$FINAL_SETUP_CMD" \
-               ../*.dsc
+               --chroot-setup-commands="${{ matrix.chroot_setup }}$BP_REPO_CMD" \
+               ../\*.dsc
         EOF
         chmod +x execute_sbuild.sh
         
