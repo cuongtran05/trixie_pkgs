@@ -174,23 +174,22 @@ jobs:
         mkdir -p ~/.cache/sbuild
         ln -sf ~/.cache/sbuild/trixie-amd64.tar.gz ~/.cache/sbuild/trixie-amd64-sbuild.tar.gz
         
-        # 2. Xây dựng chuỗi tham số --chroot-setup-commands động dựa theo trạng thái Backports
-        # Ghim phiên bản APT Pinning từ file JSON làm mặc định ban đầu
-        FINAL_SETUP_CMD="$CHROOT_SETUP_JSON"
+        # 2. Xây dựng chuỗi tham số --chroot-setup-commands động dựa theo trạng thái Backports ngoài shell cha
+        export FINAL_SETUP_CMD="$CHROOT_SETUP_JSON"
         
-        # Nếu điều kiện "is_bp": 1 được kích hoạt, tự động nối thêm lệnh bổ sung kho lưu trữ trixie-backports
         if [ "$IS_BP_VAL" -eq 1 ]; then
             BP_REPO_CMD="echo 'deb http://deb.debian.org/debian/ trixie-backports main contrib non-free non-free-firmware' > /etc/apt/sources.list.d/trixie-backports.list && apt-get update"
-            FINAL_SETUP_CMD="$FINAL_SETUP_CMD && $BP_REPO_CMD"
+            export FINAL_SETUP_CMD="$FINAL_SETUP_CMD && $BP_REPO_CMD"
         fi
         
-        # 3. Tạo file thực thi tạm để bọc lệnh an toàn tuyệt đối, tránh lỗi văng dấu nháy hoặc mất phạm vi biến
-        cat << EOF > execute_sbuild.sh
+        # 3. SỬA TẠI ĐÂY: Dùng 'EOF' nháy đơn để bảo vệ chuỗi ký tự, ngăn chặn lỗi vỡ cấu trúc do ký tự \n gây ra
+        cat << 'EOF' > execute_sbuild.sh
         #!/bin/bash
+        # Gọi biến môi trường FINAL_SETUP_CMD đã được export một cách an toàn
         sbuild --dist=trixie \
                --arch=amd64 \
                --chroot-setup-commands="$FINAL_SETUP_CMD" \
-               ../\*.dsc
+               ../*.dsc
         EOF
         chmod +x execute_sbuild.sh
         
