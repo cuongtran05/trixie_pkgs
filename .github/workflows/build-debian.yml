@@ -47,18 +47,17 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # Bước 2: Cài đặt sbuild, các công cụ đóng gói và thêm kho lưu trữ Debian Trixie ngoài máy ảo host
-    # Việc này giúp lệnh apt-cache madison ở Bước 7 chạy được trực tiếp trên Ubuntu Host mà không cần chroot
+    # Bước 2: Cài đặt công cụ đóng gói và nạp kho lưu trữ Debian Trixie chuẩn xác
     - name: Install sbuild and dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y sbuild mmdebstrap uidmap dpkg-dev debian-archive-keyring debhelper devscripts jq
         
-        # Thêm tạm thời apt-source trixie ngoài máy host để phục vụ hàm dch_version tra cứu
-        echo "deb http://debian.org trixie main" | sudo tee /etc/apt/sources.list.d/debian-trixie.list
+        # Cấu hình chính xác kho lưu trữ tệp tin deb.debian.org/debian cho Debian Trixie
+        echo "deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware" | sudo tee /etc/apt/sources.list.d/debian-trixie.list
         sudo apt-get update -o Dir::Etc::preferences=/dev/null
 
-    # Bước 3: Khởi tạo và lập chỉ mục Local APT Repository từ thư mục pkgs/ có sẵn
+    # Bước 3: Khởi tạo và lập chỉ mục Local APT Repository
     - name: Initialize Local APT Repository
       run: |
         mkdir -p pkgs
@@ -67,7 +66,7 @@ jobs:
         dpkg-scanpackages . /dev/null | gzip -9c > Packages.gz
         cd ..
 
-    # Bước 4: Cấu hình sbuild unshare và mount local repo động theo thông số của gói hiện tại
+    # Bước 4: Cấu hình sbuild unshare và gán local repo động
     - name: Configure sbuild (unshare mode)
       run: |
         sudo sbuild-adduser $USER
@@ -83,11 +82,11 @@ jobs:
         \$bwrap_mounts = [ [ '$PKGS_DIR_PATH', '/local-repo' ] ];
         \$apt_sources = [
             'deb [trusted=yes] file:///local-repo ./',
-            'deb http://debian.org trixie main'
+            'deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware'
         ];
         EOF
 
-    # Bước 5: Tự động lưu và tải lại môi trường chroot để tiết kiệm thời gian build
+    # Bước 5: Tải hoặc khởi tạo cache môi trường chroot
     - name: Cache sbuild chroot for Trixie
       id: cache-sbuild
       uses: actions/cache@v4
@@ -95,7 +94,7 @@ jobs:
         path: ~/.cache/sbuild
         key: sbuild-chroot-trixie-amd64
 
-    # Bước 6: Tạo môi trường chroot Debian Trixie (chỉ chạy nếu chưa có cache)
+    # Bước 6: Tạo môi trường chroot Debian Trixie (Chạy khi cache trống)
     - name: Create sbuild chroot for Debian Trixie
       if: steps.cache-sbuild.outputs.cache-hit != 'true'
       run: |
@@ -105,112 +104,88 @@ jobs:
                    --keyring=/usr/share/keyrings/debian-archive-keyring.gpg \
                    trixie ~/.cache/sbuild/trixie-amd64.tar.gz
 
-    # Bước 7: Tích hợp hàm dch_version động để cập nhật tệp changelog và tạo Source Package (.dsc) sạch
+    # Bước 7: Dọn dẹp tệp cũ và gọi hàm dch_version để cập nhật changelog
     - name: Build Source Package
       env:
         TAG_VAL: ${{ matrix.v }}
         IS_BP_VAL: ${{ matrix.is_bp }}
       run: |
-        # 1. Dọn dẹp sạch sẽ các tệp cũ ở thư mục cha nhằm triệt tiêu lỗi "Only one build is permitted"
         rm -f ../*.dsc ../*.tar.* ../*.changes ../*.buildinfo ../*.deb
 
-        # 2. Khai báo hàm dch_version chuẩn từ script của bạn
         dch_version() {
             local tag="${1:-v3}"
             local is_bp="${2:-0}"
-
-            if [ ! -f "debian/changelog" ]; then
-                echo "❌ Lỗi: Bạn không ở trong thư mục nguồn của gói Debian (Thiếu debian/changelog)!" >&2
-                return 1
-            fi
-            
-            local src_name
-            src_name=$(dpkg-parsechangelog -S Source)
-            
-            local local_changelog_ver
-            local_changelog_ver=$(dpkg-parsechangelog -S Version)
-
-            if [[ "$local_changelog_ver" == *bpo* ]]; then
-                is_bp=1
-            fi
-
+            if [ ! -f "debian/changelog" ]; then return 1; fi
+            local src_name=$(dpkg-parsechangelog -S Source)
+            local local_changelog_ver=$(dpkg-parsechangelog -S Version)
+            if [[ "$local_changelog_ver" == *bpo* ]]; then is_bp=1; fi
             local full_ver=""
-            local apt_clean_opts=(
-                -o "Dir::Etc::preferences=/dev/null"
-                -o "Dir::Etc::preferencesparts=/dev/null"
-                -o "Dir::Etc::sourceparts=/dev/null"
-            )
-
+            local apt_clean_opts=(-o "Dir::Etc::preferences=/dev/null" -o "Dir::Etc::preferencesparts=/dev/null" -o "Dir::Etc::sourceparts=/dev/null")
             local search_list="$src_name"
-            local upstream_bins
-            upstream_bins=$(apt-cache "${apt_clean_opts[@]}" showsrc "$src_name" 2>/dev/null | grep -E "^Binary:" | sed 's/Binary://g' | tr ',' ' ')
+            local upstream_bins=$(apt-cache "${apt_clean_opts[@]}" showsrc "$src_name" 2>/dev/null | grep -E "^Binary:" | sed 's/Binary://g' | tr ',' ' ')
             [ -z "$upstream_bins" ] && [ -f "debian/control" ] && upstream_bins=$(awk '/^Package:/ {print $2}' debian/control)
-            
             search_list="$search_list $upstream_bins"
-
-            local bin
             for bin in $search_list; do
                 if [ "$is_bp" -eq 1 ]; then
-                    full_ver=$(apt-cache "${apt_clean_opts[@]}" madison "$bin" 2>/dev/null | \
-                                grep -E "backports|~bpo" | grep -v -E "file:|ct05" | \
-                                head -n 1 | awk -F'|' '{print $2}' | tr -d ' ')
+                    full_ver=$(apt-cache "${apt_clean_opts[@]}" madison "$bin" 2>/dev/null | grep -E "backports|~bpo" | grep -v -E "file:|ct05" | head -n 1 | awk -F'|' '{print $2}' | tr -d ' ')
                 else
-                    full_ver=$(apt-cache "${apt_cut_opts[@]}" madison "$bin" 2>/dev/null | \
-                                grep -v -E "file:|ct05" | \
-                                head -n 1 | awk -F'|' '{print $2}' | tr -d ' ')
+                    full_ver=$(apt-cache "${apt_clean_opts[@]}" madison "$bin" 2>/dev/null | grep -v -E "file:|ct05" | head -n 1 | awk -F'|' '{print $2}' | tr -d ' ')
                 fi
-                
                 if [ -n "$full_ver" ] && [ "$full_ver" != "(none)" ]; then
-                    if [[ "$full_ver" == *+b[0-9]* ]]; then
-                        break
-                    fi
-                    if [ "$bin" = "$src_name" ]; then
-                        local saved_ver="$full_ver"
-                    fi
+                    if [[ "$full_ver" == *+b[0-9]* ]]; then break; fi
+                    if [ "$bin" = "$src_name" ]; then local saved_ver="$full_ver"; fi
                 fi
             done
-
-            if [ -z "$full_ver" ] || [ "$full_ver" = "(none)" ]; then
-                full_ver="${saved_ver:-$local_changelog_ver}"
-            fi
-
+            if [ -z "$full_ver" ] || [ "$full_ver" = "(none)" ]; then full_ver="${saved_ver:-$local_changelog_ver}"; fi
             local epoch=""
             local main_ver="$full_ver"
-
-            if [[ "$full_ver" == *:* ]]; then
-                epoch="${full_ver%%:*}:"
-                main_ver="${full_ver#*:}"
-            fi
-
+            if [[ "$full_ver" == *:* ]]; then epoch="${full_ver%%:*}:"; main_ver="${full_ver#*:}"; fi
             main_ver=$(echo "$main_ver" | sed -E 's/ct05v[0-9]+//g' | sed -E 's/ct05//g')
-
             local final_ver=""
             main_ver="${main_ver%[-+~]}"
             final_ver="${main_ver}+ct05${tag}"
-
             echo "${epoch}${final_ver}"
         }
 
-        # 3. Thực thi hàm để tính toán phiên bản đầu ra hợp lệ
         DYNAMIC_VERSION=$(dch_version "$TAG_VAL" "$IS_BP_VAL")
-        echo "🔥 Phiên bản tính toán tự động thành công: $DYNAMIC_VERSION"
-
-        # 4. Sử dụng lệnh dch (debchange) chính thức của Debian để cập nhật tệp debian/changelog có sẵn
-        # Phương án này thay thế hoàn toàn việc dùng 'cat << EOF' để tạo mới file, 
-        # giúp bảo toàn nội dung rules/control gốc của bạn theo đúng mong muốn!
+        echo "🔥 Phiên bản tự động tính toán: $DYNAMIC_VERSION"
         DEBCHANGE_RELEASE_HEURISTIC=log dch --v "$DYNAMIC_VERSION" "Automated build for $TAG_VAL architecture level."
-
-        # 5. Tiến hành tạo source package (.dsc) từ cấu trúc sạch vừa cập nhật
         dpkg-buildpackage -S -us -uc -d
 
-    # Bước 8: Tiến hành biên dịch gói chính thức bằng sbuild trên máy ảo
+    # Bước 8: Biên dịch gói bằng sbuild kết hợp sinh câu lệnh gán Repo Backports tự động
     - name: Run sbuild for Trixie
+      env:
+        CHROOT_SETUP_JSON: ${{ matrix.chroot_setup }}
+        IS_BP_VAL: ${{ matrix.is_bp }}
       run: |
+        # 1. Đồng bộ cấu trúc Symlink bắt buộc cho sbuild unshare
         mkdir -p ~/.cache/sbuild
         ln -sf ~/.cache/sbuild/trixie-amd64.tar.gz ~/.cache/sbuild/trixie-amd64-sbuild.tar.gz
-        sg sbuild -c "sbuild --dist=trixie --arch=amd64 --chroot-setup-commands='${{ matrix.chroot_setup }}' ../*.dsc"
+        
+        # 2. Xây dựng chuỗi tham số --chroot-setup-commands động dựa theo trạng thái Backports
+        # Ghim phiên bản APT Pinning từ file JSON làm mặc định ban đầu
+        FINAL_SETUP_CMD="$CHROOT_SETUP_JSON"
+        
+        # Nếu điều kiện "is_bp": 1 được kích hoạt, tự động nối thêm lệnh bổ sung kho lưu trữ trixie-backports
+        if [ "$IS_BP_VAL" -eq 1 ]; then
+            BP_REPO_CMD="echo 'deb http://deb.debian.org/debian/ trixie-backports main contrib non-free non-free-firmware' > /etc/apt/sources.list.d/trixie-backports.list && apt-get update"
+            FINAL_SETUP_CMD="$FINAL_SETUP_CMD && $BP_REPO_CMD"
+        fi
+        
+        # 3. Tạo file thực thi tạm để bọc lệnh an toàn tuyệt đối, tránh lỗi văng dấu nháy hoặc mất phạm vi biến
+        cat << EOF > execute_sbuild.sh
+        #!/bin/bash
+        sbuild --dist=trixie \
+               --arch=amd64 \
+               --chroot-setup-commands="$FINAL_SETUP_CMD" \
+               ../\*.dsc
+        EOF
+        chmod +x execute_sbuild.sh
+        
+        # 4. Kích hoạt thực thi với đặc quyền nhóm sbuild
+        sg sbuild -c './execute_sbuild.sh'
 
-    # Bước 9: Thu gom file thành phẩm của gói này ra một thư mục riêng để chuẩn bị upload
+    # Bước 9: Thu gom thành phẩm
     - name: Prepare Artifacts Directory
       run: |
         mkdir -p dist-package
@@ -218,7 +193,7 @@ jobs:
         cp ../*.changes dist-package/ 2>/dev/null || true
         cp ../*.buildinfo dist-package/ 2>/dev/null || true
 
-    # Bước 10: Lưu trữ file .deb thành phẩm của máy ảo này lên GitHub Actions Artifacts
+    # Bước 10: Tải tệp thành phẩm lên mục Artifacts
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
