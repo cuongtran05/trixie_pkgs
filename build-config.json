@@ -1,0 +1,19 @@
+[
+    {
+        "name": "cmake",
+        "source": "cmake",
+        "is_bp": 1,
+        "v": "v3",
+        "install_path": "/usr",
+        "lto": 0,
+        "flag": "O2",
+        "DEB_CFLAGS_APPEND": "",
+        "DEB_BUILD_OPTIONS": "parallel=6 nocheck nodoc noautodbgsym",
+        "use_tmpfs": 0,
+        "is_gcc": 0,
+        "extra_repos": [
+            "deb [trusted=yes] file:///local-repo ./"
+        ],
+        "chroot_setup": "printf 'Package: /.*/\\nPin: version /.*ct05v.*/\\nPin-Priority: 1001\\n' > /etc/apt/preferences.d/local-repo && apt-get update"
+    }
+]

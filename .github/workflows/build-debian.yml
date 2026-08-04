@@ -8,41 +8,87 @@ on:
   workflow_dispatch:
 
 jobs:
-  sbuild-trixie:
+  # JOB 1: Đọc file JSON để chuẩn bị danh sách máy ảo
+  parse-json:
     runs-on: ubuntu-latest
-
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-    # Bước 0: Dọn dẹp ổ cứng máy ảo (Xóa Android, .NET, Haskell... để giải phóng >50GB trống)
-    - name: Free Disk Space (Ubuntu)
-      uses: jlumbroso/free-disk-space@v1.3.1
-      with:
-        tool-cache: true      # Xóa bộ nhớ đệm công cụ của GitHub
-        android: true         # Xóa hoàn toàn Android SDK (~14GB)
-        dotnet: true          # Xóa .NET Runtime (~2GB)
-        haskell: true         # Xóa môi trường Haskell
-        swap: false           # Giữ lại SWAP mặc định để hỗ trợ RAM
-
-    # Bước 1: Tải mã nguồn từ kho lưu trữ về máy ảo
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # Bước 2: Cài đặt sbuild và các công cụ tạo chroot cần thiết
+    - name: Load JSON and Set Output
+      id: set-matrix
+      run: |
+        # Đọc file build-config.json và chuyển thành chuỗi một dòng gọn để truyền sang Job sau
+        JSON_DATA=$(jq -c . build-config.json)
+        echo "matrix=${JSON_DATA}" >> $GITHUB_OUTPUT
+
+  # JOB 2: Khởi chạy song song đồng thời nhiều máy ảo riêng biệt
+  sbuild-trixie:
+    needs: parse-json
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false # Nếu 1 gói build lỗi, các máy ảo build gói khác vẫn tiếp tục chạy bình thường
+      matrix:
+        include: ${{ fromJson(needs.parse-json.outputs.matrix) }}
+
+    # Tên hiển thị của từng máy ảo riêng biệt trên giao diện GitHub Actions
+    name: Build package ${{ matrix.name }}
+
+    steps:
+    # Bước 0: Dọn dẹp ổ cứng máy ảo (Cấp đầy đủ khoảng trống cho từng máy)
+    - name: Free Disk Space (Ubuntu)
+      uses: jlumbroso/free-disk-space@v1.3.1
+      with:
+        tool-cache: true      
+        android: true         
+        dotnet: true          
+        haskell: true         
+        swap: false           
+
+    # Bước 1: Tải mã nguồn từ kho lưu trữ về máy ảo hiện tại
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # Bước 2: Cài đặt sbuild và các công cụ tạo chroot cần thiết cho máy ảo này
     - name: Install sbuild and dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y sbuild mmdebstrap uidmap
+        sudo apt-get install -y sbuild mmdebstrap uidmap dpkg-dev
 
-    # Bước 3: Cấu hình sbuild chạy ở chế độ unshare (không cần quyền root)
+    # Bước 3: Khởi tạo và lập chỉ mục Local APT Repository từ thư mục pkgs/ có sẵn trong repo
+    - name: Initialize Local APT Repository
+      run: |
+        # Đảm bảo thư mục pkgs tồn tại, sau đó quét các file .deb có sẵn để làm local repo
+        mkdir -p pkgs
+        cd pkgs
+        dpkg-scanpackages . /dev/null | gzip -9c > Packages.gz
+        cd ..
+
+    # Bước 4: Cấu hình sbuild unshare và mount local repo động theo thông số của gói hiện tại
     - name: Configure sbuild (unshare mode)
       run: |
         sudo sbuild-adduser $USER
         mkdir -p ~/.config/sbuild
+        
+        # Đường dẫn tuyệt đối tới thư mục pkgs trên máy ảo này
+        PKGS_DIR_PATH=$(pwd)/pkgs
+        
         cat <<EOF > ~/.config/sbuild/config
         \$chroot_mode = 'unshare';
-        \$build_environment = { 'LC_ALL' => 'C.UTF-8' };
+        \$build_environment = { 
+          'LC_ALL' => 'C.UTF-8',
+          'DEB_BUILD_OPTIONS' => '${{ matrix.DEB_BUILD_OPTIONS }}'
+        };
+        \$bwrap_mounts = [ [ '$PKGS_DIR_PATH', '/local-repo' ] ];
+        \$apt_sources = [
+            'deb [trusted=yes] file:///local-repo ./',
+            'deb http://debian.org trixie main'
+        ];
         EOF
 
-    # Bước 4: Tự động lưu và tải lại môi trường chroot để tiết kiệm thời gian build
+    # Bước 5: Tự động lưu và tải lại môi trường chroot để tiết kiệm thời gian build của máy ảo này
     - name: Cache sbuild chroot for Trixie
       id: cache-sbuild
       uses: actions/cache@v4
@@ -50,29 +96,38 @@ jobs:
         path: ~/.cache/sbuild
         key: sbuild-chroot-trixie-amd64
 
-    # Bước 5: Tạo môi trường chroot Debian Trixie (chỉ chạy nếu chưa có cache)
+    # Bước 6: Tạo môi trường chroot Debian Trixie (chỉ chạy nếu máy ảo này chưa ăn cache)
     - name: Create sbuild chroot for Debian Trixie
       if: steps.cache-sbuild.outputs.cache-hit != 'true'
       run: |
         mkdir -p ~/.cache/sbuild
         mmdebstrap --variant=buildd trixie ~/.cache/sbuild/trixie-amd64.tar.gz
 
-    # Bước 6: Tạo source package (.dsc) từ thư mục debian/ của dự án
+    # Bước 7: Tạo source package (.dsc) từ thư mục debian/ của dự án
     - name: Build Source Package
       run: |
         dpkg-buildpackage -S -us -uc -d
 
-    # Bước 7: Tiến hành build gói chính thức bằng sbuild cho Debian Trixie
+    # Bước 8: Tiến hành build gói chính thức bằng sbuild trên máy ảo này
+    # Áp dụng lệnh cấu hình chroot_setup tùy biến được lấy trực tiếp từ file JSON cấp vào
     - name: Run sbuild for Trixie
       run: |
-        sbuild --dist=trixie --arch=amd64 ../*.dsc
+        sbuild --dist=trixie \
+               --arch=amd64 \
+               --chroot-setup-commands="${{ matrix.chroot_setup }}" \
+               ../*.dsc
 
-    # Bước 8: Lưu trữ file .deb thành phẩm lên GitHub Actions (Đã sửa lỗi)
+    # Bước 9: Thu gom file thành phẩm của gói này ra một thư mục riêng để chuẩn bị upload
+    - name: Prepare Artifacts Directory
+      run: |
+        mkdir -p dist-package
+        cp ../*.deb dist-package/ 2>/dev/null || true
+        cp ../*.changes dist-package/ 2>/dev/null || true
+        cp ../*.buildinfo dist-package/ 2>/dev/null || true
+
+    # Bước 10: Lưu trữ file .deb thành phẩm của riêng máy ảo này lên GitHub Actions Artifacts
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: debian-trixie-packages
-        path: |
-          ../*.deb
-          ../*.changes
-          ../*.buildinfo
+        name: debian-package-${{ matrix.name }}
+        path: dist-package/
