@@ -112,27 +112,15 @@ jobs:
         dpkg-buildpackage -S -us -uc -d
 
     # Bước 8: Tiến hành build gói chính thức bằng sbuild trên máy ảo này
-    # Sửa lỗi gọi biến $CHROOT_SETUP_CMD và cấu hình đúng vị trí file nén cho sbuild unshare
+    # Giải pháp tối giản: Dùng symlink chuẩn và chạy sbuild trực tiếp thông qua sg
     - name: Run sbuild for Trixie
-      env:
-        CHROOT_SETUP_CMD: ${{ matrix.chroot_setup }}
       run: |
-        # 1. Tạo thư mục cache chuẩn của sbuild nếu chưa có
+        # 1. Tạo thư mục cache và liên kết mềm (Symlink) chuẩn tên cho sbuild unshare
         mkdir -p ~/.cache/sbuild
-        
-        # 2. Tạo liên kết mềm (Symlink) tệp tarball sang tên chuẩn mà sbuild unshare tìm kiếm mặc định
         ln -sf ~/.cache/sbuild/trixie-amd64.tar.gz ~/.cache/sbuild/trixie-amd64-sbuild.tar.gz
         
-        # 3. Ghi file script chạy sbuild với dấu $ chuẩn xác trước biến môi trường
-        cat << EOF > run_sbuild.sh
-        #!/bin/bash
-        sbuild --dist=trixie \
-               --arch=amd64 \
-               --chroot-setup-commands="\$CHROOT_SETUP_CMD" \
-               ../*.dsc
-        EOF
-        chmod +x run_sbuild.sh
-        sg sbuild -c './run_sbuild.sh'
+        # 2. Thực thi sbuild trực tiếp, lấy biến matrix.chroot_setup bằng dấu nháy kép của GitHub Actions
+        sg sbuild -c "sbuild --dist=trixie --arch=amd64 --chroot-setup-commands='${{ matrix.chroot_setup }}' ../*.dsc"
 
     # Bước 9: Thu gom file thành phẩm của gói này ra một thư mục riêng để chuẩn bị upload
     - name: Prepare Artifacts Directory
