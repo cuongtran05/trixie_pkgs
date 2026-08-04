@@ -16,6 +16,14 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
+    # BƯỚC DEBUG: Tìm kiếm toàn bộ file chứa chuỗi lỗi trong repository
+    - name: Debug and Find Bad URL Location
+      run: |
+        echo "=== BẮT ĐẦU QUÉT FILE CHỨA WWW.DEBIAN.ORG ==="
+        grep -rnw "." -e "www.debian.org" || echo "Không tìm thấy trong code thường."
+        echo "=== BẮT ĐẦU QUÉT FILE TRONG THƯ MỤC DEBIAN ==="
+        grep -rnw "debian/" -e "www.debian.org" || echo "Không tìm thấy trong thư mục debian."
+
     - name: Load JSON and Set Output
       id: set-matrix
       run: |
