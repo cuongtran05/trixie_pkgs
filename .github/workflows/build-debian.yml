@@ -109,13 +109,16 @@ jobs:
         dpkg-buildpackage -S -us -uc -d
 
     # Bước 8: Tiến hành build gói chính thức bằng sbuild trên máy ảo này
-    # Ghi lệnh vào file tạm để tránh lỗi lồng dấu nháy (Quoted string error)
+    # Sử dụng 'env' để truyền biến ma trận an toàn và 'cat << EOF' để ghi file script động
     - name: Run sbuild for Trixie
+      env:
+        CHROOT_SETUP_CMD: ${{ matrix.chroot_setup }}
       run: |
-        cat << 'EOF' > run_sbuild.sh
+        cat << EOF > run_sbuild.sh
+        #!/bin/bash
         sbuild --dist=trixie \
                --arch=amd64 \
-               --chroot-setup-commands="${{ matrix.chroot_setup }}" \
+               --chroot-setup-commands="\$CHROOT_SETUP_CMD" \
                ../*.dsc
         EOF
         chmod +x run_sbuild.sh
