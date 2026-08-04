@@ -37,15 +37,15 @@ jobs:
     name: Build package ${{ matrix.name }}
 
     steps:
-    # Bước 0: Dọn dẹp ổ cứng máy ảo (Cấp đầy đủ khoảng trống cho từng máy)
-    - name: Free Disk Space (Ubuntu)
-      uses: jlumbroso/free-disk-space@v1.3.1
-      with:
-        tool-cache: true      
-        android: true         
-        dotnet: true          
-        haskell: true         
-        swap: false           
+    # # Bước 0: Dọn dẹp ổ cứng máy ảo (Cấp đầy đủ khoảng trống cho từng máy)
+    # - name: Free Disk Space (Ubuntu)
+    #   uses: jlumbroso/free-disk-space@v1.3.1
+    #   with:
+    #     tool-cache: true      
+    #     android: true         
+    #     dotnet: true          
+    #     haskell: true         
+    #     swap: false           
 
     # Bước 1: Tải mã nguồn từ kho lưu trữ về máy ảo hiện tại
     - name: Checkout code
@@ -101,7 +101,10 @@ jobs:
       if: steps.cache-sbuild.outputs.cache-hit != 'true'
       run: |
         mkdir -p ~/.cache/sbuild
-        mmdebstrap --variant=buildd trixie ~/.cache/sbuild/trixie-amd64.tar.gz
+        touch ~/.dpkg.cfg && chmod 644 ~/.dpkg.cfg
+        mmdebstrap --variant=buildd \
+                   --keyring=/usr/share/keyrings/debian-archive-keyring.gpg \
+                   trixie ~/.cache/sbuild/trixie-amd64.tar.gz
 
     # Bước 7: Tạo source package (.dsc) từ thư mục debian/ của dự án
     - name: Build Source Package
@@ -109,23 +112,23 @@ jobs:
         dpkg-buildpackage -S -us -uc -d
 
     # Bước 8: Tiến hành build gói chính thức bằng sbuild trên máy ảo này
-    # Đăng ký symlink cho chroot unshare và gọi sbuild trực tiếp theo chuẩn tên phân phối
+    # Sửa lỗi gọi biến $CHROOT_SETUP_CMD và cấu hình đúng vị trí file nén cho sbuild unshare
     - name: Run sbuild for Trixie
       env:
         CHROOT_SETUP_CMD: ${{ matrix.chroot_setup }}
       run: |
-        # 1. Tạo thư mục cấu hình chroot mặc định của sbuild nếu chưa có
-        mkdir -p ~/.config/sbuild/chroot
+        # 1. Tạo thư mục cache chuẩn của sbuild nếu chưa có
+        mkdir -p ~/.cache/sbuild
         
-        # 2. Tạo liên kết mềm (Symlink) trỏ tên cấu hình trixie-amd64 về đúng file tarball đã cache
-        ln -sf ~/.cache/sbuild/trixie-amd64.tar.gz ~/.config/sbuild/chroot/trixie-amd64-sbuild
+        # 2. Tạo liên kết mềm (Symlink) tệp tarball sang tên chuẩn mà sbuild unshare tìm kiếm mặc định
+        ln -sf ~/.cache/sbuild/trixie-amd64.tar.gz ~/.cache/sbuild/trixie-amd64-sbuild.tar.gz
         
-        # 3. Ghi file script chạy sbuild không cần truyền tham số đường dẫn phức tạp
+        # 3. Ghi file script chạy sbuild với dấu $ chuẩn xác trước biến môi trường
         cat << EOF > run_sbuild.sh
         #!/bin/bash
         sbuild --dist=trixie \
                --arch=amd64 \
-               --chroot-setup-commands="$CHROOT_SETUP_CMD" \
+               --chroot-setup-commands="\$CHROOT_SETUP_CMD" \
                ../*.dsc
         EOF
         chmod +x run_sbuild.sh
