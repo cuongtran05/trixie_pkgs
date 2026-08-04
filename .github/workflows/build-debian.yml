@@ -109,19 +109,22 @@ jobs:
         dpkg-buildpackage -S -us -uc -d
 
     # Bước 8: Tiến hành build gói chính thức bằng sbuild trên máy ảo này
-    # Sử dụng biến GITHUB_WORKSPACE để lấy đường dẫn tuyệt đối an toàn không cần dấu escape \
+    # Đăng ký symlink cho chroot unshare và gọi sbuild trực tiếp theo chuẩn tên phân phối
     - name: Run sbuild for Trixie
       env:
         CHROOT_SETUP_CMD: ${{ matrix.chroot_setup }}
       run: |
-        # Tính toán đường dẫn tuyệt đối tới file chroot từ thư mục nhà của runner
-        CHROOT_PATH="/home/runner/.cache/sbuild/trixie-amd64.tar.gz"
+        # 1. Tạo thư mục cấu hình chroot mặc định của sbuild nếu chưa có
+        mkdir -p ~/.config/sbuild/chroot
         
+        # 2. Tạo liên kết mềm (Symlink) trỏ tên cấu hình trixie-amd64 về đúng file tarball đã cache
+        ln -sf ~/.cache/sbuild/trixie-amd64.tar.gz ~/.config/sbuild/chroot/trixie-amd64-sbuild
+        
+        # 3. Ghi file script chạy sbuild không cần truyền tham số đường dẫn phức tạp
         cat << EOF > run_sbuild.sh
         #!/bin/bash
         sbuild --dist=trixie \
                --arch=amd64 \
-               --chroot="$CHROOT_PATH" \
                --chroot-setup-commands="$CHROOT_SETUP_CMD" \
                ../*.dsc
         EOF
