@@ -1,4 +1,4 @@
-name: Build Debian Trixie Package with sbuild
+name: Build Debian Trixie Package Directly
 
 on:
   push:
@@ -22,7 +22,7 @@ jobs:
         JSON_DATA=$(jq -c . build-config.json)
         echo "matrix=${JSON_DATA}" >> $GITHUB_OUTPUT
 
-  sbuild-trixie:
+  build-direct:
     needs: parse-json
     runs-on: ubuntu-latest
     strategy:
@@ -30,7 +30,7 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.parse-json.outputs.matrix) }}
 
-    name: Build package ${{ matrix.name }}
+    name: Build package ${{ matrix.name }} directly
 
     steps:
     # Bước 0: Dọn dẹp ổ cứng máy ảo
@@ -47,21 +47,25 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # Bước 2: Cài đặt sbuild, công cụ đóng gói và ép cấu hình APT Trixie chuẩn
-    - name: Install sbuild and dependencies
+    # Bước 2: Cài đặt công cụ đóng gói và thêm kho lưu trữ Debian Trixie mở rộng vào máy ảo host
+    - name: Install dependencies and configure APT
       run: |
-        # 1. Cài đặt các công cụ cơ bản ban đầu
         sudo apt-get update
-        sudo apt-get install -y sbuild mmdebstrap bubblewrap uidmap dpkg-dev debian-archive-keyring debhelper devscripts jq
+        sudo apt-get install -y dpkg-dev debian-archive-keyring debhelper devscripts jq equivs
         
-        # 2. VÔ HIỆU HÓA MIRRORLIST: Xóa bỏ tệp cấu hình gây tự động chuyển hướng URL lỗi trên máy Actions
+        # Vô hiệu hóa tệp mirrorlist gây lỗi chuyển hướng URL cũ trên máy Actions
         sudo rm -f /etc/apt/apt-mirrors.txt
         sudo rm -f /etc/apt/sources.list.d/debian-trixie.list
         
-        # 3. Ghi kho lưu trữ chuẩn với đường dẫn đầy đủ /debian (Tuyệt đối không dùng debian.org trống)
-        echo "deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware" | sudo tee /etc/apt/sources.list.d/debian-trixie.list
+        # Thêm kho chính thức Debian Trixie
+        echo "deb http://debian.org trixie main contrib non-free non-free-firmware" | sudo tee /etc/apt/sources.list.d/debian-trixie.list
         
-        # 4. Thực thi cập nhật độc lập để hàm dch_version đọc dữ liệu mượt mà
+        # Nếu là gói Backports (is_bp = 1), tự động thêm luôn kho backports vào máy ảo host
+        if [ "${{ matrix.is_bp }}" -eq 1 ]; then
+          echo "deb http://debian.org trixie-backports main contrib non-free non-free-firmware" | sudo tee -a /etc/apt/sources.list.d/debian-trixie.list
+        fi
+        
+        # Cập nhật danh sách gói, cho phép bỏ qua xác thực GPG tạm thời trước khi chạy chroot_setup
         sudo apt-get update -o Dir::Etc::preferences=/dev/null \
                             -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/debian-trixie.list \
                             -o Dir::Etc::sourceparts=/dev/null \
@@ -69,61 +73,18 @@ jobs:
                             -o Acquire::AllowDowngradeToInsecureRepositories=true \
                             --allow-unauthenticated
 
-    # Bước 3: Khởi tạo và lập chỉ mục Local APT Repository
-    - name: Initialize Local APT Repository
+    # Bước 3: Áp dụng cấu hình ghim phiên bản (APT Pinning) lấy từ file JSON trực tiếp lên máy ảo host
+    - name: Apply APT Pinning Preferences
       run: |
-        mkdir -p pkgs
-        cd pkgs
-        touch Packages.gz
-        dpkg-scanpackages . /dev/null | gzip -9c > Packages.gz
-        cd ..
+        # Thực thi chuỗi câu lệnh chroot_setup (giờ là host_setup) của bạn trực tiếp bằng quyền sudo
+        sudo sh -c "${{ matrix.chroot_setup }}"
 
-    # Bước 4: Cấu hình sbuild unshare và gán local repo động
-    - name: Configure sbuild (unshare mode)
-      run: |
-        sudo sbuild-adduser $USER
-        mkdir -p ~/.config/sbuild
-        PKGS_DIR_PATH=$(pwd)/pkgs
-        
-        cat <<EOF > ~/.config/sbuild/config
-        \$chroot_mode = 'unshare';
-        \$build_environment = { 
-          'LC_ALL' => 'C.UTF-8',
-          'DEB_BUILD_OPTIONS' => '${{ matrix.DEB_BUILD_OPTIONS }}'
-        };
-        \$bwrap_mounts = [ [ '$PKGS_DIR_PATH', '/local-repo' ] ];
-        \$apt_sources = [
-            'deb [trusted=yes] file:///local-repo ./',
-            'deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware'
-        ];
-        EOF
-
-    # Bước 5: Tải hoặc khởi tạo cache môi trường chroot
-    - name: Cache sbuild chroot for Trixie
-      id: cache-sbuild
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/sbuild
-        key: sbuild-chroot-trixie-amd64
-
-    # Bước 6: Tạo môi trường chroot Debian Trixie (Chạy khi cache trống)
-    - name: Create sbuild chroot for Debian Trixie
-      if: steps.cache-sbuild.outputs.cache-hit != 'true'
-      run: |
-        mkdir -p ~/.cache/sbuild
-        touch ~/.dpkg.cfg && chmod 644 ~/.dpkg.cfg
-        mmdebstrap --variant=buildd \
-                   --keyring=/usr/share/keyrings/debian-archive-keyring.gpg \
-                   trixie ~/.cache/sbuild/trixie-amd64.tar.gz
-
-    # Bước 7: Dọn dẹp tệp cũ và gọi hàm dch_version để cập nhật changelog
-    - name: Build Source Package
+    # Bước 4: Chạy hàm dch_version để cập nhật phiên bản động vào debian/changelog
+    - name: Update Changelog Version
       env:
         TAG_VAL: ${{ matrix.v }}
         IS_BP_VAL: ${{ matrix.is_bp }}
       run: |
-        rm -f ../*.dsc ../*.tar.* ../*.changes ../*.buildinfo ../*.deb
-
         dch_version() {
             local tag="${1:-v3}"
             local is_bp="${2:-0}"
@@ -160,39 +121,31 @@ jobs:
         }
 
         DYNAMIC_VERSION=$(dch_version "$TAG_VAL" "$IS_BP_VAL")
-        echo "🔥 Phiên bản tự động tính toán: $DYNAMIC_VERSION"
-        DEBCHANGE_RELEASE_HEURISTIC=log dch --v "$DYNAMIC_VERSION" "Automated build for $TAG_VAL architecture level."
-        dpkg-buildpackage -S -us -uc -d
+        echo "🔥 Phiên bản tính toán trực tiếp: $DYNAMIC_VERSION"
+        DEBCHANGE_RELEASE_HEURISTIC=log dch --v "$DYNAMIC_VERSION" "Automated direct build for $TAG_VAL architecture level."
 
-    # Bước 8: Biên dịch gói bằng sbuild kết hợp sinh câu lệnh gán Repo Backports tự động
-    - name: Run sbuild for Trixie
-      env:
-        IS_BP_VAL: ${{ matrix.is_bp }}
+    # Bước 5: Tự động phân tích và cài đặt toàn bộ gói phụ thuộc biên dịch (Build-Depends) vào máy ảo
+    - name: Install Package Build-Depends
       run: |
-        # 1. Đồng bộ cấu trúc Symlink bắt buộc cho sbuild unshare
-        mkdir -p ~/.cache/sbuild
-        ln -sf ~/.cache/sbuild/trixie-amd64.tar.gz ~/.cache/sbuild/trixie-amd64-sbuild.tar.gz
-        
-        # 2. Xử lý chuỗi lệnh Backports bổ sung nếu điều kiện kích hoạt
-        BP_REPO_CMD=""
-        if [ "$IS_BP_VAL" -eq 1 ]; then
-            BP_REPO_CMD=" && echo 'deb http://deb.debian.org/debian/ trixie-backports main contrib non-free non-free-firmware' > /etc/apt/sources.list.d/trixie-backports.list && apt-get update"
-        fi
-        
-        # 3. Tạo file script bằng cách đổ trực tiếp cấu hình ma trận JSON của GitHub Actions vào.
-        cat << EOF > execute_sbuild.sh
-        #!/bin/bash
-        sbuild --dist=trixie \
-               --arch=amd64 \
-               --chroot-setup-commands="${{ matrix.chroot_setup }}$BP_REPO_CMD" \
-               ../*.dsc
-        EOF
-        chmod +x execute_sbuild.sh
-        
-        # 4. Kích hoạt thực thi với đặc quyền nhóm sbuild
-        sg sbuild -c './execute_sbuild.sh'
+        # Lệnh này tự động đọc file debian/control và cài đặt mọi thư viện yêu cầu (như debhelper, cmake...)
+        sudo mk-build-deps -i -r -t "apt-get -o Debug::pkgProblemResolver=yes --no-install-recommends -y" debian/control
 
-    # Bước 9: Thu gom thành phẩm
+    # Bước 6: Tiến hành cấu hình cờ biên dịch từ JSON và build trực tiếp ra file .deb
+    - name: Build Binary Package (.deb)
+      env:
+        DEB_BUILD_OPTIONS: ${{ matrix.DEB_BUILD_OPTIONS }}
+        # Bạn có thể xuất thêm cờ tối ưu hóa kiến trúc vi xử lý x86-64-v3 ở đây nếu muốn
+        DEB_CFLAGS_APPEND: "-march=x86-64-v3"
+        DEB_CXXFLAGS_APPEND: "-march=x86-64-v3"
+      run: |
+        # Dọn dẹp file cũ ở thư mục cha
+        rm -f ../*.dsc ../*.tar.* ../*.changes ../*.buildinfo ../*.deb
+        
+        # Biên dịch trực tiếp tạo cả gói Source và gói Binary (.deb thành phẩm)
+        # Sử dụng cờ -us -uc để bỏ qua bước ký số GPG (Unsigned source, unsigned changelog)
+        dpkg-buildpackage -b -us -uc
+
+    # Bước 7: Thu gom thành phẩm
     - name: Prepare Artifacts Directory
       run: |
         mkdir -p dist-package
@@ -200,7 +153,7 @@ jobs:
         cp ../*.changes dist-package/ 2>/dev/null || true
         cp ../*.buildinfo dist-package/ 2>/dev/null || true
 
-    # Bước 10: Tải tệp thành phẩm lên mục Artifacts
+    # Bước 8: Tải tệp thành phẩm .deb lên mục Artifacts
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
