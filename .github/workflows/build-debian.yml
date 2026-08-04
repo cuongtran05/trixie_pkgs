@@ -55,7 +55,7 @@ jobs:
     - name: Install sbuild and dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y sbuild mmdebstrap uidmap dpkg-dev debian-archive-keyring
+        sudo apt-get install -y sbuild mmdebstrap uidmap dpkg-dev debian-archive-keyring debhelper
 
     # Bước 3: Khởi tạo và lập chỉ mục Local APT Repository từ thư mục pkgs/ có sẵn trong repo
     - name: Initialize Local APT Repository
