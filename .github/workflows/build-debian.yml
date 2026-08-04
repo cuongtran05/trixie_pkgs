@@ -109,13 +109,13 @@ jobs:
         dpkg-buildpackage -S -us -uc -d
 
     # Bước 8: Tiến hành build gói chính thức bằng sbuild trên máy ảo này
-    # Áp dụng lệnh cấu hình chroot_setup tùy biến được lấy trực tiếp từ file JSON cấp vào
+    # Sử dụng lệnh 'sg sbuild -c' để ép shell nhận diện quyền nhóm sbuild ngay lập tức
     - name: Run sbuild for Trixie
       run: |
-        sbuild --dist=trixie \
+        sg sbuild -c 'sbuild --dist=trixie \
                --arch=amd64 \
                --chroot-setup-commands="${{ matrix.chroot_setup }}" \
-               ../*.dsc
+               ../*.dsc'
 
     # Bước 9: Thu gom file thành phẩm của gói này ra một thư mục riêng để chuẩn bị upload
     - name: Prepare Artifacts Directory
