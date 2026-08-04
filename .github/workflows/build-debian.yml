@@ -109,17 +109,20 @@ jobs:
         dpkg-buildpackage -S -us -uc -d
 
     # Bước 8: Tiến hành build gói chính thức bằng sbuild trên máy ảo này
-    # Ép sbuild sử dụng tệp chroot tarball được mmdebstrap tạo ra thông qua tham số --chroot
+    # Sử dụng biến GITHUB_WORKSPACE để lấy đường dẫn tuyệt đối an toàn không cần dấu escape \
     - name: Run sbuild for Trixie
       env:
         CHROOT_SETUP_CMD: ${{ matrix.chroot_setup }}
       run: |
+        # Tính toán đường dẫn tuyệt đối tới file chroot từ thư mục nhà của runner
+        CHROOT_PATH="/home/runner/.cache/sbuild/trixie-amd64.tar.gz"
+        
         cat << EOF > run_sbuild.sh
         #!/bin/bash
         sbuild --dist=trixie \
                --arch=amd64 \
-               --chroot="\$HOME/.cache/sbuild/trixie-amd64.tar.gz" \
-               --chroot-setup-commands="\$CHROOT_SETUP_CMD" \
+               --chroot="$CHROOT_PATH" \
+               --chroot-setup-commands="$CHROOT_SETUP_CMD" \
                ../*.dsc
         EOF
         chmod +x run_sbuild.sh
