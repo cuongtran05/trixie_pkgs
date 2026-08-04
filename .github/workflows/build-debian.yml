@@ -52,7 +52,7 @@ jobs:
       run: |
         # 1. Cài đặt các công cụ cơ bản ban đầu
         sudo apt-get update
-        sudo apt-get install -y sbuild mmdebstrap uidmap dpkg-dev debian-archive-keyring debhelper devscripts jq
+        sudo apt-get install -y sbuild mmdebstrap bubblewrap uidmap dpkg-dev debian-archive-keyring debhelper devscripts jq
         
         # 2. VÔ HIỆU HÓA MIRRORLIST: Xóa bỏ tệp cấu hình gây tự động chuyển hướng URL lỗi trên máy Actions
         sudo rm -f /etc/apt/apt-mirrors.txt
@@ -180,13 +180,12 @@ jobs:
         fi
         
         # 3. Tạo file script bằng cách đổ trực tiếp cấu hình ma trận JSON của GitHub Actions vào.
-        # Sử dụng dấu gạch chéo ngược \ trước dấu sao của file nguồn đằng sau để giữ nguyên định dạng tệp tin.
         cat << EOF > execute_sbuild.sh
         #!/bin/bash
         sbuild --dist=trixie \
                --arch=amd64 \
                --chroot-setup-commands="${{ matrix.chroot_setup }}$BP_REPO_CMD" \
-               ../\*.dsc
+               ../*.dsc
         EOF
         chmod +x execute_sbuild.sh
         
