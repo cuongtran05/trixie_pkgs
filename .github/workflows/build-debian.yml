@@ -233,8 +233,10 @@ jobs:
         # Tạo một thư mục build độc lập và cấp quyền sở hữu hoàn toàn cho nhóm sbuild
         sudo mkdir -p /tmp/sbuild-workspace
         sudo cp bubblewrap_* /tmp/sbuild-workspace/
+        
+        # Cấp quyền đọc cho hệ thống apt sandbox nội bộ (_apt) để tránh lỗi từ chối truy cập file nguồn gốc
+        sudo chmod -R 777 /tmp/sbuild-workspace
         sudo chown -R runner:sbuild /tmp/sbuild-workspace
-        sudo chmod -R 775 /tmp/sbuild-workspace
 
         # Sử dụng Here-Doc << 'EOF' để thực thi lệnh sbuild bên trong thư mục cô lập
         sg sbuild << 'EOF'
@@ -253,10 +255,11 @@ jobs:
         
         echo "🚀 Tiến hành biên dịch tệp nguồn sbuild tại không gian an toàn: /tmp/sbuild-workspace/$DSC_FILE"
 
-        # Chạy sbuild sạch sẽ, kế thừa trực tiếp các biến export thông qua bộ lọc .sbuildrc
+        # Bổ sung cờ --nolog để ép sbuild đẩy ngược toàn bộ log biên dịch chi tiết ra stdout của GitHub Actions
         sbuild -d trixie \
           --chroot-mode=schroot \
           --build-dep-resolver=apt \
+          --nolog \
           --debbuildopt="-b -us -uc -A" \
           --debbuildopt="--build-profiles=$DEB_BUILD_PROFILES" \
           $DSC_FILE
