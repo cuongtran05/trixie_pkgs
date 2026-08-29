@@ -202,8 +202,19 @@ jobs:
           BASE_FLAGS="$BASE_FLAGS -flto=auto"
         fi
         
-        # Ép viết lệnh trên MỘT DÒNG DUY NHẤT bên trong chuỗi của sg sbuild để shell không bị dịch sai dấu ngắt dòng
-        sg sbuild -c "sbuild -d trixie --bindmounts=/local-repo --chroot-setup-commands=\$(pwd)/setup-chroot.sh --debbuildopt='-b -us -uc' --env=DEB_BUILD_OPTIONS='${{ matrix.DEB_BUILD_OPTIONS }}' --env=DEB_CFLAGS_APPEND='$BASE_FLAGS' --env=DEB_CXXFLAGS_APPEND='$BASE_FLAGS' $DSC_FILE"
+        # 1. Ghi cấu hình bindmounts vào file cấu hình cá nhân .sbuildrc của user để sbuild tự nhận diện
+        # Giải pháp này thay thế hoàn toàn cho cờ --bindmounts bị thiếu trên hệ thống
+        mkdir -p $HOME
+        echo "\$bindmounts = [ '/local-repo' ];" > $HOME/.sbuildrc
+        echo "\$chroot_setup_commands = [ '$(pwd)/setup-chroot.sh' ];" >> $HOME/.sbuildrc
+
+        # 2. Xuất các cấu hình môi trường biên dịch thông qua biến hệ thống chuẩn của Debian
+        export DEB_BUILD_OPTIONS="${{ matrix.DEB_BUILD_OPTIONS }}"
+        export DEB_CFLAGS_APPEND="$BASE_FLAGS"
+        export DEB_CXXFLAGS_APPEND="$BASE_FLAGS"
+
+        # 3. Thực thi sbuild với cú pháp tối giản nhất, loại bỏ toàn bộ các cờ tùy chọn gây lỗi parse
+        sg sbuild -c "sbuild -d trixie --debbuildopt='-b -us -uc' $DSC_FILE"
 
     - name: Update Local Repository Index & Prepare Artifacts
       run: |
