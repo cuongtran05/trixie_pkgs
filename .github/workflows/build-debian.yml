@@ -89,6 +89,9 @@ jobs:
         set -e
         apt-get update
         
+        # SỬA LỖI TẠI ĐÂY: Cài đặt công cụ đóng gói cần thiết vào bên trong chroot
+        apt-get install -y devscripts dpkg-dev
+        
         # 1. Tạo thư mục làm việc sạch và cấp quyền cho user hệ thống tải gói không bị cảnh báo
         mkdir -p /build-workspace
         chown -R _apt:root /build-workspace
@@ -97,7 +100,7 @@ jobs:
         # 2. Tải trực tiếp mã nguồn sạch từ kho lưu trữ Debian chính thức
         apt-get source ${{ matrix.source }}
         
-        # 3. SỬA LỖI TẠI ĐÂY: Xác định chính xác thư mục chứa debian/changelog bằng cấu trúc chuẩn
+        # 3. Xác định chính xác thư mục chứa debian/changelog bằng cấu trúc chuẩn
         SRC_DIR=""
         for d in */; do
             if [ -f "${d}debian/changelog" ]; then
