@@ -284,7 +284,8 @@ jobs:
     - name: Upload Artifacts to GitHub Actions UX
       uses: actions/upload-artifact@v4
       with:
-        name: debian-sbuild-package-${{ matrix.name }}
+        # Bổ sung mã hiệu kiến trúc và cờ tối ưu hóa để phân tách tên file duy nhất, triệt tiêu lỗi 409
+        name: debian-sbuild-package-${{ matrix.name }}-${{ matrix.v }}-${{ matrix.flag }}
         path: dist-package/
 
     - name: Upload Artifacts
