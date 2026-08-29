@@ -97,11 +97,22 @@ jobs:
         # 2. Tải trực tiếp mã nguồn sạch từ kho lưu trữ Debian chính thức
         apt-get source ${{ matrix.source }}
         
-        # 3. Định vị thư mục chứa file changelog vừa được giải nén ra
-        SRC_DIR=$(find . -maxdepth 2 -name "changelog" -exec dirname {} \; | exec dirname {} \;)
+        # 3. SỬA LỖI TẠI ĐÂY: Xác định chính xác thư mục chứa debian/changelog bằng cấu trúc chuẩn
+        SRC_DIR=""
+        for d in */; do
+            if [ -f "${d}debian/changelog" ]; then
+                SRC_DIR="${d%/}"
+                break
+            fi
+        done
+
+        if [ -z "$SRC_DIR" ]; then
+            echo "❌ Không tìm thấy thư mục đóng gói Debian chuẩn!"
+            exit 1
+        fi
         
-        # Di chuyển vào bên trong thư mục mã nguồn để tính toán phiên bản
-        cd $SRC_DIR
+        # Di chuyển vào bên trong thư mục mã nguồn duy nhất vừa tìm được
+        cd "$SRC_DIR"
 
         # 4. Thuật toán tự động tính toán mã phiên bản từ kho lưu trữ Debian
         dch_version() {
@@ -143,21 +154,19 @@ jobs:
         echo "🔥 Phiên bản tính toán từ kho Debian: $DYNAMIC_VERSION"
         DEBCHANGE_RELEASE_HEURISTIC=log dch --v "$DYNAMIC_VERSION" "Automated Debian chroot build for ${{ matrix.v }}."
         
-        # 5. Dựng tệp mô tả mã nguồn gốc (.dsc). Do chạy tại đây, hệ thống sẽ tìm thấy file .orig.tar.xz ở thư mục cha (..) đúng chuẩn
+        # 5. Dựng tệp mô tả mã nguồn gốc (.dsc)
         dpkg-source -b .
         EOF
 
         # 6. Trích xuất toàn bộ dữ liệu nguồn từ phân vùng chroot ra thư mục hiện tại ngoài máy host
-        # Kiểm tra cả 2 đường dẫn phân vùng vật lý phổ biến của schroot trên Ubuntu Host để đảm bảo không sót file
         CHROOT_PATH="/scratch"
         [ ! -d "$CHROOT_PATH/build-workspace" ] && CHROOT_PATH="/var/lib/schroot/chroots/trixie-amd64-sbuild"
         
         sudo cp $CHROOT_PATH/build-workspace/*.dsc ./ 2>/dev/null || true
         sudo cp $CHROOT_PATH/build-workspace/*.tar.* ./ 2>/dev/null || true
         
-        # Đưa toàn bộ cấu trúc mã nguồn đã chỉnh sửa phiên bản ra ngoài host phục vụ sbuild đọc cấu hình rules/control
-        TARGET_DIR=$(find $CHROOT_PATH/build-workspace/ -maxdepth 2 -name "changelog" -exec dirname {} \; | exec dirname {} \;)
-        sudo cp -r $CHROOT_PATH/build-workspace/$TARGET_DIR/* ./ 2>/dev/null || true
+        # Đưa toàn bộ cấu trúc mã nguồn đã chỉnh sửa phiên bản ra ngoài host phục vụ sbuild đọc cấu hình
+        sudo cp -r $CHROOT_PATH/build-workspace/* ./ 2>/dev/null || true
         
         # Cấp lại quyền sở hữu tệp tin cho user runner của GitHub Actions để sbuild tiến hành build ở bước sau
         sudo chown -R runner:docker ./
