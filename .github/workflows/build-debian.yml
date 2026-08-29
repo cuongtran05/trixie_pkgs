@@ -187,34 +187,36 @@ jobs:
     # Bước 7: Tiến hành sbuild biên dịch gói sạch sẽ
     - name: Build Package via sbuild
       run: |
-        # Chỉ tìm chính xác tệp .dsc phiên bản mới tạo (+ct05) ở thư mục hiện tại của host
-        DSC_FILE=$(ls *+ct05*.dsc | head -n 1)
-        echo "🚀 Tìm thấy file DSC đầu vào cho sbuild: $DSC_FILE"
-        
-        if [ -z "$DSC_FILE" ]; then
-          echo "❌ Không tìm thấy file .dsc hợp lệ để build!"
-          exit 1
-        fi
-        
-        # Thiết lập các cờ tối ưu hóa kiến trúc phần cứng (Compiler Flags)
+        # 1. Thiết lập các cờ tối ưu hóa kiến trúc phần cứng (Compiler Flags) từ matrix
         BASE_FLAGS="-march=${{ matrix.v == 'v4' && 'x86-64-v4' || 'x86-64-v3' }} -${{ matrix.flag }}"
         if [ "${{ matrix.lto }}" -eq 1 ]; then
           BASE_FLAGS="$BASE_FLAGS -flto=auto"
         fi
-        
-        # 1. Ghi cấu hình bindmounts vào file cấu hình cá nhân .sbuildrc của user để sbuild tự nhận diện
-        # Giải pháp này thay thế hoàn toàn cho cờ --bindmounts bị thiếu trên hệ thống
-        mkdir -p $HOME
-        echo "\$bindmounts = [ '/local-repo' ];" > $HOME/.sbuildrc
-        echo "\$chroot_setup_commands = [ '$(pwd)/setup-chroot.sh' ];" >> $HOME/.sbuildrc
 
-        # 2. Xuất các cấu hình môi trường biên dịch thông qua biến hệ thống chuẩn của Debian
+        # Xuất các biến môi trường trực tiếp ra máy host để sbuild tự động kế thừa vào chroot
         export DEB_BUILD_OPTIONS="${{ matrix.DEB_BUILD_OPTIONS }}"
         export DEB_CFLAGS_APPEND="$BASE_FLAGS"
         export DEB_CXXFLAGS_APPEND="$BASE_FLAGS"
 
-        # 3. Thực thi sbuild với cú pháp tối giản nhất, loại bỏ toàn bộ các cờ tùy chọn gây lỗi parse
-        sg sbuild -c "sbuild -d trixie --debbuildopt='-b -us -uc' $DSC_FILE"
+        # 2. Sử dụng Here-Doc << 'EOF' để truyền lệnh vào 'sg sbuild' mà không bị lỗi nuốt dấu nháy hoặc ngắt dòng
+        sg sbuild << 'EOF'
+        set -e
+        
+        # Xác định chính xác tệp .dsc phiên bản mới tạo ở thư mục hiện tại
+        DSC_FILE=$(ls *ct05v*.dsc | head -n 1)
+        echo "🚀 Tiến hành biên dịch tệp nguồn sbuild: $DSC_FILE"
+
+        # Thực thi lệnh sbuild chuẩn hóa theo cấu trúc tham khảo của bạn
+        sbuild -d trixie \
+          --bindmounts=/local-repo \
+          --extra-repository="deb [trusted=yes] file:///local-repo ./" \
+          --chroot-mode=schroot \
+          --build-dep-resolver=apt \
+          --chroot-setup-commands=$(pwd)/setup-chroot.sh \
+          --setup-hook='printf "Package: *\nPin: origin \"\"\nPin-Priority: 1001\n" > $CHROOT_ROOT/etc/apt/preferences.d/pin-glibc' \
+          --debbuildopt="-b -us -uc" \
+          --debbuildopt="--build-profiles=${{ matrix.DEB_BUILD_PROFILES }}"
+        EOF
 
     - name: Update Local Repository Index & Prepare Artifacts
       run: |
