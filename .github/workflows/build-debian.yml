@@ -42,20 +42,20 @@ jobs:
         haskell: true         
         swap: false           
 
-    # Bước 1: Chỉ lấy file cấu hình build-config.json từ kho Git
+    # Bước 1: Đồng bộ mã nguồn chứa tệp build-config.json từ nhánh Git
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # Bước 2: Cài đặt công cụ nền tảng trên máy host Ubuntu (Không thêm repo Debian vào Ubuntu host)
+    # Bước 2: Cài đặt sbuild và các gói bổ trợ hệ thống cơ bản trên môi trường Host Ubuntu
     - name: Install sbuild on host
       run: |
         sudo apt-get update
         sudo apt-get install -y sbuild schroot debootstrap devscripts dpkg-dev debian-archive-keyring jq
 
-        # Cấu hình nhóm quyền chạy sbuild
+        # Thêm tài khoản hiện tại vào nhóm đặc quyền sbuild
         sudo sbuild-adduser $USER
 
-    # Bước 3: Khởi tạo thư mục kho lưu trữ cục bộ chia sẻ (local-repo) trên máy host
+    # Bước 3: Tạo thư mục lưu trữ gói nội bộ phục vụ việc cài đặt chéo
     - name: Setup Local Repository Structure
       run: |
         sudo mkdir -p /local-repo
@@ -63,34 +63,36 @@ jobs:
         touch /local-repo/Packages
         cd /local-repo && dpkg-scanpackages . /dev/null > Packages
 
-    # Bước 4: Tạo môi trường chroot Debian Trixie (SỬA LỖI: Thêm quyền sudo khi tạo /scratch)
+    # Bước 4: Tạo sbuild chroot (SỬA LỖI: Cập nhật URL gương chuẩn mã nguồn deb.debian.org)
     - name: Create sbuild chroot for Debian Trixie
       run: |
         sudo mkdir -p /scratch
-        sudo sbuild-createchroot --make-sbuild-tarball=/var/lib/sbuild/trixie-amd64.tar.gz trixie /scratch http://debian.org
+        # Sử dụng đúng tên miền phân phối chính thức deb.debian.org để debootstrap tải tệp Release
+        sudo sbuild-createchroot --make-sbuild-tarball=/var/lib/sbuild/trixie-amd64.tar.gz trixie /scratch http://deb.debian.org/debian
 
-    # Bước 5: Cấu hình kho mã nguồn (deb-src) và APT Pinning trực tiếp BÊN TRONG chroot Debian
+    # Bước 5: Tạo kịch bản nạp kho ứng dụng Debian và APT Pinning chạy sâu bên trong chroot
     - name: Configure Repository inside sbuild chroot
       run: |
         cat << 'EOF' > setup-chroot.sh
         #!/bin/sh
-        # Chỉ định nghĩa kho mã nguồn chính thức của Debian Trixie bên trong chroot
-        echo "deb-src http://debian.org trixie main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/debian-sources-src.list
+        # Thiết lập kho mã nguồn deb-src độc lập hoàn toàn với Ubuntu Host
+        echo "deb-src http://deb.debian.org/debian trixie main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/debian-sources-src.list
         
+        # Đăng ký thêm kho lưu trữ Backports nếu biến ma trận yêu cầu
         if [ "${{ matrix.is_bp }}" -eq 1 ]; then
-          echo "deb http://debian.org trixie-backports main contrib non-free non-free-firmware" >> /etc/apt/sources.list
-          echo "deb-src http://debian.org trixie-backports main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/debian-sources-src.list
+          echo "deb http://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware" >> /etc/apt/sources.list
+          echo "deb-src http://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/debian-sources-src.list
         fi
 
-        # Nạp kho phần mềm nội bộ (Sẽ được sbuild bindmount từ máy host vào)
+        # Mount kho phần mềm trung gian /local-repo từ môi trường ảo vào chroot
         echo "${{ matrix.extra_repos }}" > /etc/apt/sources.list.d/local-repo.list
         
-        # Áp dụng quy tắc ghim phiên bản của bạn lên hệ thống APT Debian
+        # Áp dụng cấu hình mức độ ưu tiên ghim phiên bản của bạn
         ${{ matrix.chroot_setup }}
         EOF
         chmod +x setup-chroot.sh
 
-    # Bước 6: Chạy APT Source lấy mã nguồn từ Debian và Tính toán phiên bản trực tiếp TRONG CHROOT DEBIAN
+    # Bước 6: Gọi APT Source và tính toán phiên bản động trực tiếp BÊN TRONG chroot Debian biệt lập
     - name: Download Source and Dynamic Versioning via Debian Chroot
       run: |
         cat << 'EOF' > run-inside-chroot.sh
@@ -98,16 +100,16 @@ jobs:
         set -e
         apt-get update
         
-        # 1. Tải mã nguồn sạch từ kho Debian Upstream thông qua biến ma trận JSON
+        # 1. Thực hiện tải mã nguồn gói từ kho Debian chính thức bằng biến matrix.source
         mkdir -p /tmp/src-download && cd /tmp/src-download
         apt-get source ${{ matrix.source }}
         
-        # Di chuyển mã nguồn ra thư mục làm việc chính
+        # Định vị thư mục chứa mã nguồn vừa tải xuống và đồng bộ cấu trúc
         SRC_DIR=$(find . -maxdepth 2 -name "changelog" -exec dirname {} \; | exec dirname {} \;)
         cp -r /tmp/src-download/$SRC_DIR/* /build-workspace/
         cd /build-workspace
 
-        # 2. Định nghĩa hàm tính toán phiên bản chuyên dụng (Chỉ quét thông tin trên kho Debian)
+        # 2. Thuật toán phân tích phiên bản tự động từ tệp tin chỉ mục Debian
         dch_version() {
             local tag="${1:-v3}"
             local is_bp="${2:-0}"
@@ -144,31 +146,32 @@ jobs:
         }
 
         DYNAMIC_VERSION=$(dch_version "${{ matrix.v }}" "${{ matrix.is_bp }}")
-        echo "🔥 Phiên bản tính toán hoàn toàn từ kho Debian: $DYNAMIC_VERSION"
+        echo "🔥 Phiên bản định danh từ Debian Repo: $DYNAMIC_VERSION"
         DEBCHANGE_RELEASE_HEURISTIC=log dch --v "$DYNAMIC_VERSION" "Automated Debian chroot build for ${{ matrix.v }}."
         
-        # 3. Tạo tệp mã nguồn (.dsc) chuẩn bị cho sbuild
+        # 3. Biên dịch gói nguồn ra file .dsc trung gian
         dpkg-source -b .
         EOF
         chmod +x run-inside-chroot.sh
 
-        # Dọn dẹp thư mục host ngoại trừ tệp hệ thống của GitHub để tránh xung đột dữ liệu cũ
+        # Xóa các tệp làm việc cũ trên Host để chuẩn bị nhận dữ liệu sạch từ chroot gửi ra
         find . -mindepth 1 -maxdepth 1 ! -name ".github" ! -name "build-config.json" ! -name "setup-chroot.sh" ! -name "run-inside-chroot.sh" -exec rm -rf {} +
 
-        # Thực thi tệp script xuyên qua môi trường chroot Debian bằng schroot
+        # Đẩy kịch bản vào chạy độc lập thông qua schroot Debian Trixie
         sudo schroot -c source:trixie-amd64-sbuild --directory=$GITHUB_WORKSPACE --bind=$GITHUB_WORKSPACE:/build-workspace /bin/bash ./run-inside-chroot.sh
 
-    # Bước 7: Tiến hành Build gói bằng sbuild cách ly hoàn toàn
+    # Bước 7: Tiến hành ra lệnh cho sbuild biên dịch sạch gói phần mềm
     - name: Build Package via sbuild
       run: |
         DSC_FILE=$(ls ../*.dsc)
         
+        # Xây dựng chuỗi cờ biên dịch March tối ưu hóa phần cứng từ cấu hình JSON
         BASE_FLAGS="-march=${{ matrix.v == 'v4' && 'x86-64-v4' || 'x86-64-v3' }} -${{ matrix.flag }}"
         if [ "${{ matrix.lto }}" -eq 1 ]; then
           BASE_FLAGS="$BASE_FLAGS -flto=auto"
         fi
         
-        # Chạy sbuild bọc trong nhóm 'sg sbuild' để làm mới đặc quyền phiên chạy
+        # Chạy tiến trình sbuild khép kín trong không gian tên nhóm 'sbuild'
         sg sbuild -c "sbuild -d trixie \
           --bindmounts=/local-repo \
           --chroot-setup-commands=\$(pwd)/setup-chroot.sh \
@@ -178,7 +181,7 @@ jobs:
           --env=DEB_CXXFLAGS_APPEND='$BASE_FLAGS' \
           \$DSC_FILE"
 
-    # Bước 8: Thu gom thành phẩm từ sbuild và cập nhật lại chỉ mục kho nội bộ
+    # Bước 8: Thu gom tệp tin thay đổi .changes và tệp nhị phân .deb về kho chung
     - name: Update Local Repository Index & Prepare Artifacts
       run: |
         mkdir -p dist-package
@@ -191,7 +194,7 @@ jobs:
         dpkg-scanpackages . /dev/null > Packages
         gzip -fk Packages
 
-    # Bước 9: Đẩy file .deb lên mục Artifacts của GitHub
+    # Bước 9: Xuất thành phẩm lên kho lưu trữ Artifacts của GitHub Action
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
