@@ -210,17 +210,12 @@ jobs:
         fi
 
         # Xuất các biến môi trường trực tiếp ra máy host để sbuild tự động kế thừa vào chroot
-        # Khắc phục triệt để bằng cách không dùng cờ --env nguy hiểm
         export DEB_BUILD_OPTIONS="${{ matrix.DEB_BUILD_OPTIONS }}"
         export DEB_BUILD_PROFILES="${{ matrix.DEB_BUILD_PROFILES }}"
         export DEB_CFLAGS_APPEND="$BASE_FLAGS"
         export DEB_CXXFLAGS_APPEND="$BASE_FLAGS"
 
-        # Cấp quyền đọc ghi tối đa cho không gian làm việc của host để chroot truy cập file mượt mà
-        sudo chmod -R 777 $GITHUB_WORKSPACE
-
         # Cấu hình các hook hành động ổn định thông qua .sbuildrc của Perl theo chuẩn sbuild core
-        # Khai báo cấu trúc ENVIRONMENT_FILTER để sbuild cho phép các biến môi trường custom lọt vào trong chroot
         mkdir -p $HOME
         cat << 'PERL' > $HOME/.sbuildrc
         our $bindmounts = [ '/local-repo' ];
@@ -235,9 +230,18 @@ jobs:
         1;
         PERL
 
-        # Sử dụng Here-Doc << 'EOF' để thực thi lệnh sbuild
+        # Tạo một thư mục build độc lập và cấp quyền sở hữu hoàn toàn cho nhóm sbuild
+        sudo mkdir -p /tmp/sbuild-workspace
+        sudo cp bubblewrap_* /tmp/sbuild-workspace/
+        sudo chown -R runner:sbuild /tmp/sbuild-workspace
+        sudo chmod -R 775 /tmp/sbuild-workspace
+
+        # Sử dụng Here-Doc << 'EOF' để thực thi lệnh sbuild bên trong thư mục cô lập
         sg sbuild << 'EOF'
         set -e
+        
+        # Di chuyển vào không gian làm việc an toàn đã cấu hình phân quyền đầy đủ
+        cd /tmp/sbuild-workspace
         
         # Tìm chính xác tệp .dsc chứa chuỗi danh tính ct05v theo đúng yêu cầu của bạn
         DSC_FILE=$(ls *ct05v*.dsc | head -n 1)
@@ -247,7 +251,7 @@ jobs:
             exit 1
         fi
         
-        echo "🚀 Tiến hành biên dịch tệp nguồn sbuild theo cấu trúc tham khảo chuẩn hóa: $DSC_FILE"
+        echo "🚀 Tiến hành biên dịch tệp nguồn sbuild tại không gian an toàn: /tmp/sbuild-workspace/$DSC_FILE"
 
         # Chạy sbuild sạch sẽ, kế thừa trực tiếp các biến export thông qua bộ lọc .sbuildrc
         sbuild -d trixie \
@@ -256,6 +260,9 @@ jobs:
           --debbuildopt="-b -us -uc -A" \
           --debbuildopt="--build-profiles=$DEB_BUILD_PROFILES" \
           $DSC_FILE
+
+        # Di chuyển toàn bộ các gói sản phẩm thu được (.deb, .changes, .buildinfo) quay trở lại thư mục gốc để bước sau thu thập
+        cp *.deb *.changes *.buildinfo $GITHUB_WORKSPACE/../ 2>/dev/null || true
         EOF
 
     - name: Update Local Repository Index & Prepare Artifacts
