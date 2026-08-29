@@ -58,10 +58,11 @@ jobs:
         touch /local-repo/Packages
         cd /local-repo && dpkg-scanpackages . /dev/null > Packages
 
+    # Bước 4: Tạo sbuild chroot cho Debian Trixie (Đã sửa URL từ debian.org thành deb.debian.org)
     - name: Create sbuild chroot for Debian Trixie
       run: |
         sudo mkdir -p /scratch
-        sudo sbuild-createchroot --make-sbuild-tarball=/var/lib/sbuild/trixie-amd64.tar.gz trixie /scratch http://debian.org
+        sudo sbuild-createchroot --make-sbuild-tarball=/var/lib/sbuild/trixie-amd64.tar.gz trixie /scratch http://deb.debian.org/debian
 
     - name: Configure Repository inside sbuild chroot
       run: |
