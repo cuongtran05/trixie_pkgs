@@ -234,7 +234,7 @@ jobs:
         sudo mkdir -p /tmp/sbuild-workspace
         sudo cp bubblewrap_* /tmp/sbuild-workspace/
         
-        # Cấp quyền đọc cho hệ thống apt sandbox nội bộ (_apt) để tránh lỗi từ chối truy cập file nguồn gốc
+        # Cấp quyền đọc ghi tối đa cho hệ thống apt sandbox nội bộ (_apt)
         sudo chmod -R 777 /tmp/sbuild-workspace
         sudo chown -R runner:sbuild /tmp/sbuild-workspace
 
@@ -255,13 +255,13 @@ jobs:
         
         echo "🚀 Tiến hành biên dịch tệp nguồn sbuild tại không gian an toàn: /tmp/sbuild-workspace/$DSC_FILE"
 
-        # Bổ sung cờ --nolog để ép sbuild đẩy ngược toàn bộ log biên dịch chi tiết ra stdout của GitHub Actions
+        # Chuẩn hóa cấu trúc debbuildopt để triệt tiêu lỗi trùng lặp tham số dòng lệnh
+        # Ép sbuild chỉ truyền một chuỗi tùy chọn duy nhất bao gồm cả profiles đóng gói
         sbuild -d trixie \
           --chroot-mode=schroot \
           --build-dep-resolver=apt \
           --nolog \
-          --debbuildopt="-b -us -uc -A" \
-          --debbuildopt="--build-profiles=$DEB_BUILD_PROFILES" \
+          --debbuildopt="-b -us -uc -A --build-profiles=$DEB_BUILD_PROFILES" \
           $DSC_FILE
 
         # Di chuyển toàn bộ các gói sản phẩm thu được (.deb, .changes, .buildinfo) quay trở lại thư mục gốc để bước sau thu thập
