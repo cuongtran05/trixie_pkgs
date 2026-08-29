@@ -255,16 +255,14 @@ jobs:
         
         echo "🚀 Tiến hành biên dịch tệp nguồn sbuild tại không gian an toàn: /tmp/sbuild-workspace/$DSC_FILE"
 
-        # Phân tách rõ ràng từng cờ riêng biệt để tránh lỗi bẻ gãy khoảng trắng của dpkg-buildpackage
-        # Loại bỏ cấu hình profile thủ công vì hệ thống đã tự nhặt qua môi trường filter ở trên
+        # Chuyển đổi cờ sang -B để đóng gói các file binary phụ thuộc kiến trúc, loại bỏ xung đột logic của dpkg-buildpackage
         sbuild -d trixie \
           --chroot-mode=schroot \
           --build-dep-resolver=apt \
           --nolog \
-          --debbuildopt="-b" \
+          --debbuildopt="-B" \
           --debbuildopt="-us" \
           --debbuildopt="-uc" \
-          --debbuildopt="-A" \
           $DSC_FILE
 
         # Di chuyển toàn bộ các gói sản phẩm thu được (.deb, .changes, .buildinfo) quay trở lại thư mục gốc để bước sau thu thập
