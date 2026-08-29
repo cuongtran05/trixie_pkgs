@@ -85,21 +85,20 @@ jobs:
     # Bước 6: Tải mã nguồn, xử lý phiên bản và trích xuất vật lý file .dsc ra ngoài máy host
     - name: Download Source and Dynamic Versioning via Debian Chroot
       run: |
-        # Tạo sẵn một thư mục con trên host để gom gọn toàn bộ môi trường xây dựng mã nguồn
-        BUILD_ENV_DIR="$GITHUB_WORKSPACE/debian-build-env"
-        mkdir -p "$BUILD_ENV_DIR"
-
-        # Thực thi tập lệnh 100% bên trong Debian Chroot, trỏ thẳng không gian làm việc vào thư mục host đã mount
-        sudo schroot -c chroot:trixie-amd64-sbuild --directory="$BUILD_ENV_DIR" -- /bin/bash << 'EOF'
+        # 1. Thực thi toàn bộ logic đóng gói bên trong thư mục /tmp biệt lập của Debian Chroot
+        sudo schroot -c chroot:trixie-amd64-sbuild --directory=/tmp -- /bin/bash << 'EOF'
         set -e
         
-        # Đảm bảo bật kho deb-src của hệ điều hành Debian bên trong chroot
+        # Kích hoạt kho deb-src của Debian bên trong chroot
         sudo sed -i 's/^#\s*deb-src/deb-src/g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
         
         apt-get update
         apt-get install -y devscripts dpkg-dev
         
-        # Tải trực tiếp mã nguồn sạch từ kho lưu trữ Debian chính thức (lúc này lưu trực tiếp lên ổ đĩa host)
+        # Tạo thư mục làm việc nội bộ bên trong chroot
+        mkdir -p /tmp/debian-build-env && cd /tmp/debian-build-env
+        
+        # Tải trực tiếp mã nguồn sạch từ kho lưu trữ Debian chính thức
         apt-get source ${{ matrix.source }}
         
         # Xác định chính xác thư mục chứa debian/changelog bằng cấu trúc chuẩn
@@ -161,24 +160,22 @@ jobs:
         export DEBFULLNAME="Cường Trần"
         dch --force-bad-version --v "$DYNAMIC_VERSION" "Automated Debian chroot build for ${{ matrix.v }}."
         
-        # Quay trở lại thư mục làm việc chung để tạo tệp mô tả mã nguồn gốc (.dsc)
-        cd "$BUILD_ENV_DIR"
+        # Quay trở lại thư mục cha để tạo tệp mô tả mã nguồn gốc (.dsc)
+        cd /tmp/debian-build-env
         dpkg-source -b "$SRC_DIR"
         EOF
 
-        # 2. Xử lý di chuyển file từ thư mục môi trường ra thẳng gốc GITHUB_WORKSPACE ngoài máy host
-        cd "$BUILD_ENV_DIR"
-        cp *.dsc $GITHUB_WORKSPACE/ 2>/dev/null || true
-        cp *.tar.* $GITHUB_WORKSPACE/ 2>/dev/null || true
-        
-        # Tìm và lấy chính xác thư mục chứa mã nguồn Debian sạch vừa giải nén
+        # 2. TRÍCH XUẤT AN TOÀN: Nén và đẩy luồng dữ liệu từ chroot ra ngoài máy host ngay lập tức
+        # Giải pháp này giải quyết được cả lỗi chroot dạng overlay/ephemeral vì chạy phiên lệnh mới gom hàng trực tiếp
+        sudo schroot -c chroot:trixie-amd64-sbuild --directory=/tmp -- tar -cf - -C /tmp/debian-build-env . | tar -xf - -C $GITHUB_WORKSPACE/
+
+        # Di chuyển cây thư mục mã nguồn từ thư mục con ra thẳng gốc thư mục làm việc của host để sbuild nhận diện rộng rãi
         SRC_DIR_NAME=$(find ./ -maxdepth 2 -name "changelog" -exec dirname {} \; | awk -F'/' '{print $2}')
-        if [ -n "$SRC_DIR_NAME" ]; then
-            cp -r $SRC_DIR_NAME/* $GITHUB_WORKSPACE/ 2>/dev/null || true
+        if [ -n "$SRC_DIR_NAME" ] && [ "$SRC_DIR_NAME" != "." ]; then
+            cp -r $SRC_DIR_NAME/* ./ 2>/dev/null || true
         fi
         
-        # Cấp lại quyền sở hữu tệp tin cho user runner của GitHub Actions để bước sbuild tiếp theo đọc ghi mượt mà
-        cd $GITHUB_WORKSPACE
+        # Cấp lại quyền sở hữu tệp tin cho user runner của GitHub Actions để sbuild có toàn quyền đọc cấu hình
         sudo chown -R runner:docker ./
         echo "📸 Kiểm tra các tệp tin nguồn đầu vào cho sbuild tại máy host:"
         ls -la
