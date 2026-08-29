@@ -69,15 +69,24 @@ jobs:
       run: |
         cat << 'EOF' > setup-chroot.sh
         #!/bin/sh
-        echo "deb-src http://deb.debian.org/debian/ trixie main contrib non-free non-free-firmware" > /etc/apt/sources.list
-        echo "deb http://deb.debian.org/debian/ trixie main non-free-firmware contrib non-free" >> /etc/apt/sources.list
+        set -e
         
+        # ĐÃ BỔ SUNG: Ghi đè kho lưu trữ Debian Trixie chuẩn (Cả nhị phân và mã nguồn)
+        # Sử dụng tệp cấu hình độc lập 'trixie.list' để đảm bảo an toàn hệ thống và không làm mất file gốc
+        echo "deb http://deb.debian.org/debian/ trixie main non-free-firmware contrib non-free" > /etc/apt/sources.list.d/trixie.list
+        echo "deb-src http://deb.debian.org/debian/ trixie main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/trixie.list
+        
+        # Thêm kho lưu trữ Backports nếu ma trận yêu cầu
         if [ "${{ matrix.is_bp }}" -eq 1 ]; then
-          echo "deb http://deb.debian.org/debian/ trixie-backports main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/bp-sources.list
+          echo "deb http://deb.debian.org/debian/ trixie-backports main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/bp-sources.list
           echo "deb-src http://deb.debian.org/debian/ trixie-backports main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/bp-sources.list
         fi
 
-        echo "${{ matrix.extra_repos }}" > /etc/apt/sources.list.d/local-repo.list
+        # Thiết lập kho lưu trữ nội bộ bổ sung lấy từ ma trận JSON của bạn
+        # Lưu ý: Cần bọc biến trong dấu nháy kép để tránh lỗi parse chuỗi khi có ký tự đặc biệt
+        echo "${{ matrix.extra_repos[0] || 'deb [trusted=yes] file:///local-repo ./' }}" > /etc/apt/sources.list.d/local-repo.list
+        
+        # Thực thi các lệnh tùy chỉnh bổ sung (Cấu hình preferences pin gói, v.v.)
         ${{ matrix.chroot_setup }}
         EOF
         chmod +x setup-chroot.sh
@@ -184,7 +193,7 @@ jobs:
         echo "📸 Kiểm tra các tệp tin nguồn đầu vào cho sbuild tại máy host:"
         ls -la
 
-    # Bước 7: Tiến hành sbuild biên dịch gói sạch sẽ
+    # Bước 7: Tiến hành sbuild biên dịch gói sạch sẽ theo cấu trúc lệnh tham khảo chuẩn hóa
     - name: Build Package via sbuild
       run: |
         # 1. Thiết lập các cờ tối ưu hóa kiến trúc phần cứng (Compiler Flags) từ matrix
@@ -198,36 +207,30 @@ jobs:
         export DEB_CFLAGS_APPEND="$BASE_FLAGS"
         export DEB_CXXFLAGS_APPEND="$BASE_FLAGS"
 
-        # Đảm bảo đồng bộ quyền truy cập file trên hệ thống host
+        # Cấp quyền đọc ghi tối đa cho không gian làm việc của host
         sudo chmod -R 777 $GITHUB_WORKSPACE
-        chmod +x $(pwd)/setup-chroot.sh
 
-        # 2. Cấu hình các hook hành động ổn định thông qua .sbuildrc của Perl
+        # 2. Khởi tạo cấu hình bindmounts Perl (Cơ chế an toàn nhất cho sbuild)
         mkdir -p $HOME
-        cat << 'PERL' > $HOME/.sbuildrc
-        our $bindmounts = [ '/local-repo' ];
-        our $chroot_setup_commands = [
-            'printf "Package: *\nPin: origin \"\"\nPin-Priority: 1001\n" > /etc/apt/preferences.d/pin-glibc'
-        ];
-        PERL
-        
-        # Đẩy kịch bản setup-chroot vào mảng thực thi của sbuild core
-        echo "push @\$chroot_setup_commands, '/bin/bash $(pwd)/setup-chroot.sh';" >> $HOME/.sbuildrc
+        echo "our \$bindmounts = [ '/local-repo' ];" > $HOME/.sbuildrc
         echo "1;" >> $HOME/.sbuildrc
 
-        # 3. Sử dụng Here-Doc << 'EOF' để thực thi lệnh sbuild chuẩn hóa cú pháp
+        # 3. Sử dụng Here-Doc << 'EOF' để thực thi lệnh sbuild chuẩn hóa theo mẫu tham khảo của bạn
         sg sbuild << 'EOF'
         set -e
         
-        # Xác định chính xác duy nhất tệp .dsc phiên bản sửa đổi vừa tạo
+        # Xác định chính xác tệp .dsc phiên bản mới tạo ở thư mục hiện tại
         DSC_FILE=$(ls *ct05v*.dsc | head -n 1)
-        echo "🚀 Tiến hành biên dịch tệp nguồn sbuild: $DSC_FILE"
+        echo "🚀 Tiến hành biên dịch tệp nguồn sbuild theo cấu trúc tham khảo: $DSC_FILE"
 
-        # ĐÃ SỬA LỖI: Gộp toàn bộ tùy chọn của dpkg-buildpackage vào một chuỗi duy nhất cách nhau bằng dấu trống
-        # Đồng thời ép tắt test (nocheck) và tắt tài liệu (nodoc) trực tiếp tại cấu hình lõi sbuild
+        # ỨNG DỤNG LỆNH THAM KHẢO: Loại bỏ hoàn toàn các cờ gây lỗi tùy chọn dòng lệnh
+        # Sử dụng --extra-repository lấy trực tiếp dữ liệu mảng cấu hình từ ma trận json của bạn
         sbuild -d trixie \
+          --extra-repository="${{ matrix.extra_repos[0] || 'deb [trusted=yes] file:///local-repo ./' }}" \
           --chroot-mode=schroot \
           --build-dep-resolver=apt \
+          --setup-hook='printf "Package: *\nPin: origin \"\"\nPin-Priority: 1001\n" > $CHROOT_ROOT/etc/apt/preferences.d/pin-glibc' \
+          --setup-hook="$(pwd)/setup-chroot.sh" \
           --debbuildopt="-b -us -uc -A --build-profiles=${{ matrix.DEB_BUILD_PROFILES }} -eDEB_BUILD_OPTIONS=nocheck,nodoc,parallel=6" \
           $DSC_FILE
         EOF
