@@ -105,19 +105,13 @@ jobs:
     # Bước 6: Tải mã nguồn, xử lý phiên bản và trích xuất vật lý file .dsc ra ngoài máy host
     - name: Download Source and Dynamic Versioning via Debian Chroot
       run: |
-        # Lưu trữ tạm các tệp cấu hình tùy chỉnh của bạn trên Host trước khi tiến hành đồng bộ nguồn
-        mkdir -p /tmp/my-custom-debian
-        cp -r debian/ CMakeLists.txt /tmp/my-custom-debian/ 2>/dev/null || true
-
-        # Thực thi quy trình trong phiên chroot, cấp quyền tối đa cho thư mục tmp để user _apt không bị từ chối truy cập (Permission denied)
+        # Thực thi quy trình trong phiên chroot để tải mã nguồn chuẩn từ kho Debian
         sudo schroot -c chroot:trixie-amd64-sbuild --directory=/tmp -- /bin/bash << 'EOF' > output_env.tar
         set -e
-        
-        # Sửa lỗi phân quyền cho hệ thống apt sandbox bên trong chroot
         chmod 1777 /tmp
         chown -R _apt:root /var/lib/apt/lists/
         
-        # Kích hoạt kho deb-src của Debian bên trong chroot
+        # Kích hoạt kho deb-src bên trong chroot
         sudo sed -i 's/^#\s*deb-src/deb-src/g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
         
         apt-get update >/dev/null
@@ -126,10 +120,10 @@ jobs:
         # Tạo thư mục làm việc nội bộ bên trong chroot
         mkdir -p /tmp/debian-build-env && cd /tmp/debian-build-env
         
-        # Tải trực tiếp mã nguồn sạch từ kho lưu trữ Debian chính thức
+        # Tải trực tiếp mã nguồn sạch của chính gói bubblewrap từ kho Debian
         apt-get source ${{ matrix.source }} >/dev/null
         
-        # Xác định chính xác thư mục chứa debian/changelog bằng cấu trúc chuẩn
+        # Xác định chính xác thư mục chứa mã nguồn bubblewrap vừa tải
         SRC_DIR=""
         for d in */; do
             if [ -f "${d}debian/changelog" ]; then
@@ -184,40 +178,26 @@ jobs:
         DYNAMIC_VERSION=$(dch_version "${{ matrix.v }}" "${{ matrix.is_bp }}")
         echo "🔥 Phiên bản tính toán từ kho Debian: $DYNAMIC_VERSION" >&2
         
+        # Cập nhật nhật ký phiên bản chính thức của gói bubblewrap
         export DEBEMAIL="cuongtran05@github.com"
         export DEBFULLNAME="Cường Trần"
-        dch --force-bad-version --v "$DYNAMIC_VERSION" "Automated Debian chroot build for ${{ matrix.v }}." >/dev/null 2>&1
+        dch --force-bad-version --v "$DYNAMIC_VERSION" "Automated Debian chroot rebuild for ${{ matrix.v }}." >/dev/null 2>&1
         
-        # Quay trở lại thư mục cha để tạo tệp mô tả mã nguồn gốc (.dsc)
+        # Quay trở lại thư mục cha và sinh lại tệp .dsc chính chủ được cập nhật số phiên bản mới
         cd /tmp/debian-build-env
         dpkg-source -b "$SRC_DIR" >/dev/null 2>&1
         
-        # Đóng gói toàn bộ kết quả xuất ra STDOUT ngay TRƯỚC KHI chroot đóng lại
+        # Đóng gói toàn bộ kết quả xuất ra STDOUT
         tar -cf - .
         EOF
 
         # 2. Xử lý giải nén file tar thu được ngay trên máy host
         tar -xf output_env.tar -C $GITHUB_WORKSPACE/
         rm -f output_env.tar
-
-        # Xác định thư mục nguồn vừa được bung ra từ kho lưu trữ Debian
-        SRC_DIR_NAME=$(find ./ -maxdepth 2 -name "changelog" -exec dirname {} \; | grep -v "/tmp/" | awk -F'/' '{print $2}' | head -n 1)
         
-        if [ -n "$SRC_DIR_NAME" ] && [ "$SRC_DIR_NAME" != "." ]; then
-            # Ghi đè bắt buộc các file đóng gói tùy chỉnh (control, rules, CMake) của bạn vào bên trong thư mục nguồn
-            cp -r /tmp/my-custom-debian/debian/* $SRC_DIR_NAME/debian/ 2>/dev/null || true
-            cp /tmp/my-custom-debian/CMakeLists.txt $SRC_DIR_NAME/ 2>/dev/null || true
-            
-            # Đồng bộ lại mã nguồn ra ngoài root workspace của host để sbuild thực thi diện rộng thuận tiện
-            cp -r $SRC_DIR_NAME/* ./ 2>/dev/null || true
-        fi
-        
-        # Đóng gói lại tệp tin .dsc chuẩn hóa ngay trên host dựa trên cấu trúc tích hợp mới để tránh lỗi sai lệch checksum hashes
-        dpkg-source -b ./ 2>/dev/null || true
-        
-        # Cấp lại quyền sở hữu tệp tin cho user runner của GitHub Actions để sbuild có toàn quyền đọc cấu hình
+        # Cấp lại quyền sở hữu tệp tin cho user runner của GitHub Actions để sbuild có toàn quyền đọc
         sudo chown -R runner:docker ./
-        echo "📸 Kiểm tra các tệp tin nguồn đầu vào cho sbuild tại máy host:"
+        echo "📸 Kiểm tra các tệp tin nguồn đích thực của gói bubblewrap tại máy host:"
         ls -la
 
     # Bước 7: Tiến hành sbuild biên dịch gói sạch sẽ
@@ -230,7 +210,9 @@ jobs:
         fi
 
         # Xuất các biến môi trường trực tiếp ra máy host để sbuild tự động kế thừa vào chroot
+        # Giữ nguyên DEB_BUILD_OPTIONS=parallel=6 nocheck nodoc noautodbgsym từ tệp JSON của bạn
         export DEB_BUILD_OPTIONS="${{ matrix.DEB_BUILD_OPTIONS }}"
+        export DEB_BUILD_PROFILES="${{ matrix.DEB_BUILD_PROFILES }}"
         export DEB_CFLAGS_APPEND="$BASE_FLAGS"
         export DEB_CXXFLAGS_APPEND="$BASE_FLAGS"
 
@@ -252,15 +234,19 @@ jobs:
         sg sbuild << 'EOF'
         set -e
         
-        # Xác định chính xác duy nhất tệp .dsc phiên bản sửa đổi cấu trúc hoàn chỉnh vừa tạo
-        DSC_FILE=$(ls *.dsc | head -n 1)
+        # Bắt chính xác duy nhất tệp .dsc chính thức của bubblewrap đã được dch đổi tên phiên bản mới
+        DSC_FILE=$(ls bubblewrap_*.dsc | head -n 1)
         echo "🚀 Tiến hành biên dịch tệp nguồn sbuild theo cấu trúc tham khảo chuẩn hóa: $DSC_FILE"
 
-        # Khởi chạy sbuild sạch, ép tắt chạy test-suite bằng cấu hình DEB_BUILD_OPTIONS trực tiếp
+        # Khởi chạy sbuild sạch, nạp cấu hình DEB_BUILD_OPTIONS động qua biến môi trường của host
         sbuild -d trixie \
           --chroot-mode=schroot \
           --build-dep-resolver=apt \
-          --debbuildopt="-b -us -uc -A --build-profiles=${{ matrix.DEB_BUILD_PROFILES }} -eDEB_BUILD_OPTIONS=nocheck,nodoc,parallel=6" \
+          --debbuildopt="-b -us -uc -A" \
+          --env=DEB_BUILD_OPTIONS="$DEB_BUILD_OPTIONS" \
+          --env=DEB_BUILD_PROFILES="$DEB_BUILD_PROFILES" \
+          --env=DEB_CFLAGS_APPEND="$DEB_CFLAGS_APPEND" \
+          --env=DEB_CXXFLAGS_APPEND="$DEB_CXXFLAGS_APPEND" \
           $DSC_FILE
         EOF
 
