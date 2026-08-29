@@ -271,15 +271,22 @@ jobs:
 
     - name: Update Local Repository Index & Prepare Artifacts
       run: |
-        mkdir -p dist-package
-        # Gom các file từ root workspace vào thư mục dist-package để chuẩn bị upload
-        cp $GITHUB_WORKSPACE/*.deb $GITHUB_WORKSPACE/*.changes $GITHUB_WORKSPACE/*.buildinfo dist-package/ 2>/dev/null || true
+        # 1. Khởi tạo cấu trúc thư mục lồng nhau lấy tên theo trường "name" từ ma trận JSON
+        # Thư mục đích thực tế: $GITHUB_WORKSPACE/dist-package/${{ matrix.name }}/
+        TARGET_DIR="$GITHUB_WORKSPACE/dist-package/${{ matrix.name }}"
+        mkdir -p "$TARGET_DIR"
         
-        # Đồng bộ vào kho lưu trữ nội bộ hệ thống như ban đầu
-        sudo cp dist-package/*.deb /local-repo/ 2>/dev/null || true
+        # 2. Chỉ gom duy nhất các tệp .deb của gói vào thư mục riêng vừa tạo
+        cp $GITHUB_WORKSPACE/*.deb "$TARGET_DIR/" 2>/dev/null || true
+        
+        # 3. Đồng bộ các tệp .deb vào kho lưu trữ nội bộ hệ thống như cấu hình gốc ban đầu
+        sudo cp "$TARGET_DIR"/*.deb /local-repo/ 2>/dev/null || true
         cd /local-repo
         sudo dpkg-scanpackages . /dev/null > Packages
         sudo gzip -fk Packages
+
+        # 4. Dọn dẹp sạch sẽ toàn bộ các file tạm (.deb, .changes, .buildinfo) ngoài root workspace để tránh lỗi trùng lặp sang job ma trận khác
+        rm -f $GITHUB_WORKSPACE/*.deb $GITHUB_WORKSPACE/*.changes $GITHUB_WORKSPACE/*.buildinfo 2>/dev/null || true
 
     - name: Upload Artifacts to GitHub Actions UX
       uses: actions/upload-artifact@v4
