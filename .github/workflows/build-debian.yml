@@ -85,21 +85,22 @@ jobs:
     # Bước 6: Tải mã nguồn, xử lý phiên bản và trích xuất vật lý file .dsc ra ngoài máy host
     - name: Download Source and Dynamic Versioning via Debian Chroot
       run: |
-        # 1. Thực thi toàn bộ logic đóng gói bên trong thư mục /tmp biệt lập của Debian Chroot
-        sudo schroot -c chroot:trixie-amd64-sbuild --directory=/tmp -- /bin/bash << 'EOF'
+        # Thực thi TOÀN BỘ quy trình trong một phiên chroot duy nhất để tránh bị xóa dữ liệu tạm thời
+        # Kết quả nén tar sẽ được stream trực tiếp từ trong chroot ra ngoài máy host thông qua stdout
+        sudo schroot -c chroot:trixie-amd64-sbuild --directory=/tmp -- /bin/bash << 'EOF' > output_env.tar
         set -e
         
         # Kích hoạt kho deb-src của Debian bên trong chroot
         sudo sed -i 's/^#\s*deb-src/deb-src/g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
         
-        apt-get update
-        apt-get install -y devscripts dpkg-dev
+        apt-get update >/dev/null
+        apt-get install -y devscripts dpkg-dev >/dev/null
         
         # Tạo thư mục làm việc nội bộ bên trong chroot
         mkdir -p /tmp/debian-build-env && cd /tmp/debian-build-env
         
         # Tải trực tiếp mã nguồn sạch từ kho lưu trữ Debian chính thức
-        apt-get source ${{ matrix.source }}
+        apt-get source ${{ matrix.source }} >/dev/null
         
         # Xác định chính xác thư mục chứa debian/changelog bằng cấu trúc chuẩn
         SRC_DIR=""
@@ -111,7 +112,7 @@ jobs:
         done
 
         if [ -z "$SRC_DIR" ]; then
-            echo "❌ Không tìm thấy thư mục đóng gói Debian chuẩn!"
+            echo "❌ Không tìm thấy thư mục đóng gói Debian chuẩn!" >&2
             exit 1
         fi
         
@@ -154,20 +155,23 @@ jobs:
         }
 
         DYNAMIC_VERSION=$(dch_version "${{ matrix.v }}" "${{ matrix.is_bp }}")
-        echo "🔥 Phiên bản tính toán từ kho Debian: $DYNAMIC_VERSION"
+        echo "🔥 Phiên bản tính toán từ kho Debian: $DYNAMIC_VERSION" >&2
         
         export DEBEMAIL="cuongtran05@github.com"
         export DEBFULLNAME="Cường Trần"
-        dch --force-bad-version --v "$DYNAMIC_VERSION" "Automated Debian chroot build for ${{ matrix.v }}."
+        dch --force-bad-version --v "$DYNAMIC_VERSION" "Automated Debian chroot build for ${{ matrix.v }}." >/dev/null 2>&1
         
         # Quay trở lại thư mục cha để tạo tệp mô tả mã nguồn gốc (.dsc)
         cd /tmp/debian-build-env
-        dpkg-source -b "$SRC_DIR"
+        dpkg-source -b "$SRC_DIR" >/dev/null 2>&1
+        
+        # Đóng gói toàn bộ kết quả xuất ra STDOUT ngay TRƯỚC KHI chroot đóng lại
+        tar -cf - .
         EOF
 
-        # 2. TRÍCH XUẤT AN TOÀN: Nén và đẩy luồng dữ liệu từ chroot ra ngoài máy host ngay lập tức
-        # Giải pháp này giải quyết được cả lỗi chroot dạng overlay/ephemeral vì chạy phiên lệnh mới gom hàng trực tiếp
-        sudo schroot -c chroot:trixie-amd64-sbuild --directory=/tmp -- tar -cf - -C /tmp/debian-build-env . | tar -xf - -C $GITHUB_WORKSPACE/
+        # 2. Xử lý giải nén file tar thu được ngay trên máy host
+        tar -xf output_env.tar -C $GITHUB_WORKSPACE/
+        rm -f output_env.tar
 
         # Di chuyển cây thư mục mã nguồn từ thư mục con ra thẳng gốc thư mục làm việc của host để sbuild nhận diện rộng rãi
         SRC_DIR_NAME=$(find ./ -maxdepth 2 -name "changelog" -exec dirname {} \; | awk -F'/' '{print $2}')
