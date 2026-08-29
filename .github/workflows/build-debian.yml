@@ -198,12 +198,11 @@ jobs:
         export DEB_CFLAGS_APPEND="$BASE_FLAGS"
         export DEB_CXXFLAGS_APPEND="$BASE_FLAGS"
 
-        # ĐÃ SỬA LỖI QUYỀN TRUY CẬP: Cấp quyền đọc/ghi tối đa cho toàn bộ thư mục làm việc hiện tại
-        # Điều này giúp user sbuild nội bộ bên trong chroot không bị lỗi Permission denied khi truy cập file dsc/tar
+        # Đảm bảo đồng bộ quyền truy cập file trên hệ thống host
         sudo chmod -R 777 $GITHUB_WORKSPACE
         chmod +x $(pwd)/setup-chroot.sh
 
-        # 2. Cấu hình TOÀN BỘ các hook hành động thông qua .sbuildrc của Perl
+        # 2. Cấu hình các hook hành động ổn định thông qua .sbuildrc của Perl
         mkdir -p $HOME
         cat << 'PERL' > $HOME/.sbuildrc
         our $bindmounts = [ '/local-repo' ];
@@ -212,26 +211,24 @@ jobs:
         ];
         PERL
         
-        # Thêm đường dẫn tuyệt đối của tệp setup-chroot.sh vào mảng lệnh cấu hình chroot
+        # Đẩy kịch bản setup-chroot vào mảng thực thi của sbuild core
         echo "push @\$chroot_setup_commands, '/bin/bash $(pwd)/setup-chroot.sh';" >> $HOME/.sbuildrc
         echo "1;" >> $HOME/.sbuildrc
 
-        # 3. Sử dụng Here-Doc << 'EOF' để thực thi lệnh sbuild
+        # 3. Sử dụng Here-Doc << 'EOF' để thực thi lệnh sbuild chuẩn hóa cú pháp
         sg sbuild << 'EOF'
         set -e
         
-        # Xác định chính xác tệp .dsc phiên bản mới tạo ở thư mục hiện tại
+        # Xác định chính xác duy nhất tệp .dsc phiên bản sửa đổi vừa tạo
         DSC_FILE=$(ls *ct05v*.dsc | head -n 1)
         echo "🚀 Tiến hành biên dịch tệp nguồn sbuild: $DSC_FILE"
 
-        # Sử dụng tùy chọn loại bỏ kiểm tra lỗi nghiêm ngặt và bỏ qua test suite hoàn toàn
+        # ĐÃ SỬA LỖI: Gộp toàn bộ tùy chọn của dpkg-buildpackage vào một chuỗi duy nhất cách nhau bằng dấu trống
+        # Đồng thời ép tắt test (nocheck) và tắt tài liệu (nodoc) trực tiếp tại cấu hình lõi sbuild
         sbuild -d trixie \
           --chroot-mode=schroot \
           --build-dep-resolver=apt \
-          --debbuildopt="-b -us -uc" \
-          --debbuildopt="-A" \
-          --debbuildopt="--build-profiles=${{ matrix.DEB_BUILD_PROFILES }}" \
-          --debbuildopt="-eDEB_BUILD_OPTIONS=nocheck,nodoc,parallel=6" \
+          --debbuildopt="-b -us -uc -A --build-profiles=${{ matrix.DEB_BUILD_PROFILES }} -eDEB_BUILD_OPTIONS=nocheck,nodoc,parallel=6" \
           $DSC_FILE
         EOF
 
