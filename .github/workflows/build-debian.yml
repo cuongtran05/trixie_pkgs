@@ -198,12 +198,24 @@ jobs:
         export DEB_CFLAGS_APPEND="$BASE_FLAGS"
         export DEB_CXXFLAGS_APPEND="$BASE_FLAGS"
 
-        # 2. ĐÃ SỬA LỖI: Sử dụng 'our' để khai báo biến cấu hình Perl hợp lệ trong .sbuildrc
+        # Đảm bảo cấp quyền thực thi cho file cấu hình chroot ngoài máy host
+        chmod +x $(pwd)/setup-chroot.sh
+
+        # 2. Cấu hình TOÀN BỘ các hook hành động thông qua .sbuildrc của Perl
+        # Giải pháp này ép sbuild chạy tập lệnh thiết lập chroot an toàn mà không lỗi cú pháp dòng lệnh
         mkdir -p $HOME
-        echo "our \$bindmounts = [ '/local-repo' ];" > $HOME/.sbuildrc
+        cat << 'PERL' > $HOME/.sbuildrc
+        our $bindmounts = [ '/local-repo' ];
+        our $chroot_setup_commands = [
+            'printf "Package: *\nPin: origin \"\"\nPin-Priority: 1001\n" > /etc/apt/preferences.d/pin-glibc'
+        ];
+        PERL
+        
+        # Thêm đường dẫn tuyệt đối của tệp setup-chroot.sh vào mảng lệnh cấu hình chroot
+        echo "push @\$chroot_setup_commands, '/bin/bash $(pwd)/setup-chroot.sh';" >> $HOME/.sbuildrc
         echo "1;" >> $HOME/.sbuildrc
 
-        # 3. Sử dụng Here-Doc << 'EOF' để thực thi lệnh an toàn trong nhóm sbuild
+        # 3. Sử dụng Here-Doc << 'EOF' để thực thi lệnh sbuild ở dạng tinh giản nhất
         sg sbuild << 'EOF'
         set -e
         
@@ -211,13 +223,10 @@ jobs:
         DSC_FILE=$(ls *ct05v*.dsc | head -n 1)
         echo "🚀 Tiến hành biên dịch tệp nguồn sbuild: $DSC_FILE"
 
-        # Thực thi lệnh sbuild chuẩn theo mẫu tham khảo, loại bỏ hoàn toàn cờ --bindmounts gây lỗi
+        # Thực thi lệnh sbuild thuần túy, mọi cấu hình bổ trợ đã được đóng gói an toàn trong .sbuildrc
         sbuild -d trixie \
-          --extra-repository="deb [trusted=yes] file:///local-repo ./" \
           --chroot-mode=schroot \
           --build-dep-resolver=apt \
-          --setup-hook='printf "Package: *\nPin: origin \"\"\nPin-Priority: 1001\n" > $CHROOT_ROOT/etc/apt/preferences.d/pin-glibc' \
-          --setup-hook="$(pwd)/setup-chroot.sh" \
           --debbuildopt="-b -us -uc" \
           --debbuildopt="--build-profiles=${{ matrix.DEB_BUILD_PROFILES }}" \
           $DSC_FILE
