@@ -198,7 +198,11 @@ jobs:
         export DEB_CFLAGS_APPEND="$BASE_FLAGS"
         export DEB_CXXFLAGS_APPEND="$BASE_FLAGS"
 
-        # 2. Sử dụng Here-Doc << 'EOF' để truyền lệnh vào 'sg sbuild' mà không bị lỗi nuốt dấu nháy hoặc ngắt dòng
+        # 2. Khởi tạo cấu hình bindmounts nội bộ thông qua .sbuildrc để tránh dùng cờ dòng lệnh
+        mkdir -p $HOME
+        echo "\$bindmounts = [ '/local-repo' ];" > $HOME/.sbuildrc
+
+        # 3. Sử dụng Here-Doc << 'EOF' để thực thi lệnh an toàn trong nhóm sbuild
         sg sbuild << 'EOF'
         set -e
         
@@ -206,16 +210,16 @@ jobs:
         DSC_FILE=$(ls *ct05v*.dsc | head -n 1)
         echo "🚀 Tiến hành biên dịch tệp nguồn sbuild: $DSC_FILE"
 
-        # Thực thi lệnh sbuild chuẩn hóa theo cấu trúc tham khảo của bạn
+        # Thực thi lệnh sbuild chuẩn theo mẫu tham khảo, loại bỏ hoàn toàn cờ --bindmounts gây lỗi
         sbuild -d trixie \
-          --bindmounts=/local-repo \
           --extra-repository="deb [trusted=yes] file:///local-repo ./" \
           --chroot-mode=schroot \
           --build-dep-resolver=apt \
-          --chroot-setup-commands=$(pwd)/setup-chroot.sh \
           --setup-hook='printf "Package: *\nPin: origin \"\"\nPin-Priority: 1001\n" > $CHROOT_ROOT/etc/apt/preferences.d/pin-glibc' \
+          --setup-hook="$(pwd)/setup-chroot.sh" \
           --debbuildopt="-b -us -uc" \
-          --debbuildopt="--build-profiles=${{ matrix.DEB_BUILD_PROFILES }}"
+          --debbuildopt="--build-profiles=${{ matrix.DEB_BUILD_PROFILES }}" \
+          $DSC_FILE
         EOF
 
     - name: Update Local Repository Index & Prepare Artifacts
