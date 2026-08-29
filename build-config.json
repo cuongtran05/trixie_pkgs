@@ -1,19 +1,16 @@
 [
     {
-        "name": "cmake",
-        "source": "cmake",
-        "is_bp": 1,
+        "name": "bubblewrap",
+        "source": "bubblewrap",
+        "is_bp": 0,
         "v": "v3",
-        "install_path": "/usr",
-        "lto": 0,
+        "lto": 1,
         "flag": "O2",
         "DEB_CFLAGS_APPEND": "",
         "DEB_BUILD_OPTIONS": "parallel=6 nocheck nodoc noautodbgsym",
-        "use_tmpfs": 0,
-        "is_gcc": 0,
-        "extra_repos": [
-            "deb [trusted=yes] file:///local-repo ./"
-        ],
-        "chroot_setup": "printf 'Package: /.*/\\nPin: version /.*ct05v.*/\\nPin-Priority: 1001\\n' > /etc/apt/preferences.d/local-repo && apt-get update"
+        "DEB_BUILD_PROFILES": "nodoc nocheck",
+        "use_tmpfs": 1,
+        "extra_repos": ["deb [trusted=yes] file:///local-repo ./"],
+        "chroot_setup": "echo 'Package: *\nPin: release o=LocalRepo\nPin-Priority: 1001' > /etc/apt/preferences.d/local-repo && apt-get update"
     }
 ]
