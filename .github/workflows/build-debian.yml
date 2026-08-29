@@ -161,15 +161,17 @@ jobs:
         dpkg-source -b "$SRC_DIR"
         EOF
 
-        # 2. SỬA LỖI TẠI ĐÂY: Sao chép vật lý trực tiếp từ thư mục /scratch cố định ngoài máy host
-        # Vì chroot dạng DIRECTORY, đường dẫn này luôn luôn tồn tại trên ổ đĩa của host
-        sudo cp /scratch/tmp/debian-build-env/*.dsc ./ 2>/dev/null || true
-        sudo cp /scratch/tmp/debian-build-env/*.tar.* ./ 2>/dev/null || true
+        # 2. ĐÃ SỬA LỖI: Định nghĩa chính xác đường dẫn phân vùng /tmp của sbuild chroot nằm trên máy host
+        CHROOT_ENV_DIR="/var/lib/sbuild/chroot/trixie-amd64-sbuild/tmp/debian-build-env"
+
+        # Sao chép vật lý trực tiếp từ thư mục chroot ra ngoài máy host làm việc hiện tại
+        sudo cp $CHROOT_ENV_DIR/*.dsc ./ 2>/dev/null || true
+        sudo cp $CHROOT_ENV_DIR/*.tar.* ./ 2>/dev/null || true
         
         # Giải nén cây thư mục mã nguồn ra ngoài máy host phục vụ sbuild đọc tệp rules/control
-        SRC_DIR_NAME=$(find /scratch/tmp/debian-build-env/ -maxdepth 2 -name "changelog" -exec dirname {} \; | awk -F'/' '{print $5}')
+        SRC_DIR_NAME=$(find $CHROOT_ENV_DIR/ -maxdepth 2 -name "changelog" -exec dirname {} \; | awk -F'/' '{print $8}')
         if [ -n "$SRC_DIR_NAME" ]; then
-            sudo cp -r /scratch/tmp/debian-build-env/$SRC_DIR_NAME/* ./ 2>/dev/null || true
+            sudo cp -r $CHROOT_ENV_DIR/$SRC_DIR_NAME/* ./ 2>/dev/null || true
         fi
         
         # Cấp lại quyền sở hữu tệp tin cho user runner của GitHub Actions để sbuild có toàn quyền đọc cấu hình
