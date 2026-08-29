@@ -202,17 +202,8 @@ jobs:
           BASE_FLAGS="$BASE_FLAGS -flto=auto"
         fi
         
-        # Thực thi lệnh sbuild với cú pháp chuẩn hóa tùy chọn dòng lệnh
-        # Lưu ý: Các cờ cấu hình hệ thống sbuild đặt trước, tệp nguồn .dsc đặt ở cuối cùng
-        sg sbuild -c "sbuild \
-          -d trixie \
-          --bindmounts=/local-repo \
-          --chroot-setup-commands=\$(pwd)/setup-chroot.sh \
-          --debbuildopt='-b -us -uc' \
-          --env=DEB_BUILD_OPTIONS='${{ matrix.DEB_BUILD_OPTIONS }}' \
-          --env=DEB_CFLAGS_APPEND='$BASE_FLAGS' \
-          --env=DEB_CXXFLAGS_APPEND='$BASE_FLAGS' \
-          $DSC_FILE"
+        # Ép viết lệnh trên MỘT DÒNG DUY NHẤT bên trong chuỗi của sg sbuild để shell không bị dịch sai dấu ngắt dòng
+        sg sbuild -c "sbuild -d trixie --bindmounts=/local-repo --chroot-setup-commands=\$(pwd)/setup-chroot.sh --debbuildopt='-b -us -uc' --env=DEB_BUILD_OPTIONS='${{ matrix.DEB_BUILD_OPTIONS }}' --env=DEB_CFLAGS_APPEND='$BASE_FLAGS' --env=DEB_CXXFLAGS_APPEND='$BASE_FLAGS' $DSC_FILE"
 
     - name: Update Local Repository Index & Prepare Artifacts
       run: |
