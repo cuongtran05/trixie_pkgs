@@ -65,31 +65,42 @@ jobs:
         # sudo sbuild-createchroot --make-sbuild-tarball=/var/lib/sbuild/trixie-amd64.tar.gz trixie /scratch http://deb.debian.org/debian
         sudo sbuild-createchroot trixie /scratch http://deb.debian.org/debian
 
+    # Bước cấu hình: Khởi tạo các hook lệnh bằng cơ chế bảo vệ biến môi trường
     - name: Configure Repository inside sbuild chroot
+      env:
+        MATRIX_EXTRA_REPOS: ${{ matrix.extra_repos }}
+        MATRIX_CHROOT_SETUP: ${{ matrix.chroot_setup }}
       run: |
         cat << 'EOF' > setup-chroot.sh
         #!/bin/sh
         set -e
         
-        # ĐÃ BỔ SUNG: Ghi đè kho lưu trữ Debian Trixie chuẩn (Cả nhị phân và mã nguồn)
-        # Sử dụng tệp cấu hình độc lập 'trixie.list' để đảm bảo an toàn hệ thống và không làm mất file gốc
+        # 1. Ghi đè kho lưu trữ Debian Trixie sạch dạng tệp độc lập bảo vệ hệ thống
         echo "deb http://deb.debian.org/debian/ trixie main non-free-firmware contrib non-free" > /etc/apt/sources.list.d/trixie.list
         echo "deb-src http://deb.debian.org/debian/ trixie main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/trixie.list
         
-        # Thêm kho lưu trữ Backports nếu ma trận yêu cầu
+        # 2. Thêm kho lưu trữ Backports nếu ma trận yêu cầu
         if [ "${{ matrix.is_bp }}" -eq 1 ]; then
           echo "deb http://deb.debian.org/debian/ trixie-backports main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/bp-sources.list
           echo "deb-src http://deb.debian.org/debian/ trixie-backports main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/bp-sources.list
         fi
 
-        # Thiết lập kho lưu trữ nội bộ bổ sung lấy từ ma trận JSON của bạn
-        # Lưu ý: Cần bọc biến trong dấu nháy kép để tránh lỗi parse chuỗi khi có ký tự đặc biệt
-        echo "${{ matrix.extra_repos[0] || 'deb [trusted=yes] file:///local-repo ./' }}" > /etc/apt/sources.list.d/local-repo.list
+        # 3. Ghi kho lưu trữ nội bộ an toàn tuyệt đối nhờ biến môi trường (bảo vệ dấu ngoặc vuông [])
+        if [ -n "$MATRIX_EXTRA_REPOS" ]; then
+          echo "$MATRIX_EXTRA_REPOS" > /etc/apt/sources.list.d/local-repo.list
+        else
+          echo "deb [trusted=yes] file:///local-repo ./" > /etc/apt/sources.list.d/local-repo.list
+        fi
         
-        # Thực thi các lệnh tùy chỉnh bổ sung (Cấu hình preferences pin gói, v.v.)
-        ${{ matrix.chroot_setup }}
+        # 4. Thực thi các lệnh tùy chỉnh nâng cao (Pin gói, update apt,...) từ file json
+        if [ -n "$MATRIX_CHROOT_SETUP" ]; then
+          eval "$MATRIX_CHROOT_SETUP"
+        fi
         EOF
+        
         chmod +x setup-chroot.sh
+        echo "📸 Kiểm tra nội dung tệp setup-chroot.sh vừa tạo để đảm bảo không lỗi cú pháp:"
+        cat setup-chroot.sh
 
     # Bước 6: Tải mã nguồn, xử lý phiên bản và trích xuất vật lý file .dsc ra ngoài máy host
     - name: Download Source and Dynamic Versioning via Debian Chroot
@@ -193,10 +204,10 @@ jobs:
         echo "📸 Kiểm tra các tệp tin nguồn đầu vào cho sbuild tại máy host:"
         ls -la
 
-    # Bước 7: Tiến hành sbuild biên dịch gói sạch sẽ theo cấu trúc lệnh tham khảo chuẩn hóa
+    # Bước 7: Tiến hành sbuild biên dịch gói sạch sẽ
     - name: Build Package via sbuild
       run: |
-        # 1. Thiết lập các cờ tối ưu hóa kiến trúc phần cứng (Compiler Flags) từ matrix
+        # Thiết lập các cờ tối ưu hóa kiến trúc phần cứng (Compiler Flags) từ matrix
         BASE_FLAGS="-march=${{ matrix.v == 'v4' && 'x86-64-v4' || 'x86-64-v3' }} -${{ matrix.flag }}"
         if [ "${{ matrix.lto }}" -eq 1 ]; then
           BASE_FLAGS="$BASE_FLAGS -flto=auto"
@@ -207,30 +218,32 @@ jobs:
         export DEB_CFLAGS_APPEND="$BASE_FLAGS"
         export DEB_CXXFLAGS_APPEND="$BASE_FLAGS"
 
-        # Cấp quyền đọc ghi tối đa cho không gian làm việc của host
+        # Cấp quyền đọc ghi tối đa cho không gian làm việc của host để chroot truy cập file mượt mà
         sudo chmod -R 777 $GITHUB_WORKSPACE
 
-        # 2. Khởi tạo cấu hình bindmounts Perl (Cơ chế an toàn nhất cho sbuild)
+        # Cấu hình các hook hành động ổn định thông qua .sbuildrc của Perl theo chuẩn sbuild core
         mkdir -p $HOME
-        echo "our \$bindmounts = [ '/local-repo' ];" > $HOME/.sbuildrc
-        echo "1;" >> $HOME/.sbuildrc
+        cat << 'PERL' > $HOME/.sbuildrc
+        our $bindmounts = [ '/local-repo' ];
+        our $chroot_setup_commands = [
+            'printf "Package: *\nPin: origin \"\"\nPin-Priority: 1001\n" > /etc/apt/preferences.d/pin-glibc',
+            '/bin/bash ' . qx(pwd | tr -d '\n') . '/setup-chroot.sh'
+        ];
+        1;
+        PERL
 
-        # 3. Sử dụng Here-Doc << 'EOF' để thực thi lệnh sbuild chuẩn hóa theo mẫu tham khảo của bạn
+        # Sử dụng Here-Doc << 'EOF' để thực thi lệnh sbuild
         sg sbuild << 'EOF'
         set -e
         
-        # Xác định chính xác tệp .dsc phiên bản mới tạo ở thư mục hiện tại
+        # Xác định chính xác duy nhất tệp .dsc phiên bản sửa đổi vừa tạo
         DSC_FILE=$(ls *ct05v*.dsc | head -n 1)
-        echo "🚀 Tiến hành biên dịch tệp nguồn sbuild theo cấu trúc tham khảo: $DSC_FILE"
+        echo "🚀 Tiến hành biên dịch tệp nguồn sbuild theo cấu trúc tham khảo chuẩn hóa: $DSC_FILE"
 
-        # ỨNG DỤNG LỆNH THAM KHẢO: Loại bỏ hoàn toàn các cờ gây lỗi tùy chọn dòng lệnh
-        # Sử dụng --extra-repository lấy trực tiếp dữ liệu mảng cấu hình từ ma trận json của bạn
+        # Khởi chạy sbuild sạch, ép tắt chạy test-suite của bubblewrap bằng cấu hình DEB_BUILD_OPTIONS trực tiếp
         sbuild -d trixie \
-          --extra-repository="${{ matrix.extra_repos[0] || 'deb [trusted=yes] file:///local-repo ./' }}" \
           --chroot-mode=schroot \
           --build-dep-resolver=apt \
-          --setup-hook='printf "Package: *\nPin: origin \"\"\nPin-Priority: 1001\n" > $CHROOT_ROOT/etc/apt/preferences.d/pin-glibc' \
-          --setup-hook="$(pwd)/setup-chroot.sh" \
           --debbuildopt="-b -us -uc -A --build-profiles=${{ matrix.DEB_BUILD_PROFILES }} -eDEB_BUILD_OPTIONS=nocheck,nodoc,parallel=6" \
           $DSC_FILE
         EOF
