@@ -202,7 +202,6 @@ jobs:
         chmod +x $(pwd)/setup-chroot.sh
 
         # 2. Cấu hình TOÀN BỘ các hook hành động thông qua .sbuildrc của Perl
-        # Giải pháp này ép sbuild chạy tập lệnh thiết lập chroot an toàn mà không lỗi cú pháp dòng lệnh
         mkdir -p $HOME
         cat << 'PERL' > $HOME/.sbuildrc
         our $bindmounts = [ '/local-repo' ];
@@ -215,7 +214,7 @@ jobs:
         echo "push @\$chroot_setup_commands, '/bin/bash $(pwd)/setup-chroot.sh';" >> $HOME/.sbuildrc
         echo "1;" >> $HOME/.sbuildrc
 
-        # 3. Sử dụng Here-Doc << 'EOF' để thực thi lệnh sbuild ở dạng tinh giản nhất
+        # 3. Sử dụng Here-Doc << 'EOF' để thực thi lệnh sbuild
         sg sbuild << 'EOF'
         set -e
         
@@ -223,12 +222,15 @@ jobs:
         DSC_FILE=$(ls *ct05v*.dsc | head -n 1)
         echo "🚀 Tiến hành biên dịch tệp nguồn sbuild: $DSC_FILE"
 
-        # Thực thi lệnh sbuild thuần túy, mọi cấu hình bổ trợ đã được đóng gói an toàn trong .sbuildrc
+        # ĐÃ CẢI TIẾN: Bổ sung cờ cứng -o DEB_BUILD_OPTIONS="nocheck" trực tiếp vào sbuild dòng lệnh
+        # Điều này đảm bảo dpkg-buildpackage tuyệt đối KHÔNG chạy test suite của bubblewrap trong môi trường thiếu quyền
         sbuild -d trixie \
           --chroot-mode=schroot \
           --build-dep-resolver=apt \
           --debbuildopt="-b -us -uc" \
+          --debbuildopt="-A" \
           --debbuildopt="--build-profiles=${{ matrix.DEB_BUILD_PROFILES }}" \
+          --debbuildopt="-eDEB_BUILD_OPTIONS=nocheck,nodoc,parallel=6" \
           $DSC_FILE
         EOF
 
