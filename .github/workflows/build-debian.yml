@@ -265,21 +265,27 @@ jobs:
           --debbuildopt="-uc" \
           $DSC_FILE
 
-        # Di chuyển toàn bộ các gói sản phẩm thu được (.deb, .changes, .buildinfo) quay trở lại thư mục gốc để bước sau thu thập
-        cp *.deb *.changes *.buildinfo $GITHUB_WORKSPACE/../ 2>/dev/null || true
+        # Đảm bảo copy toàn bộ thành phẩm từ thư mục tạm /tmp/sbuild-workspace về thẳng root workspace của Host
+        cp /tmp/sbuild-workspace/*.deb /tmp/sbuild-workspace/*.changes /tmp/sbuild-workspace/*.buildinfo $GITHUB_WORKSPACE/ 2>/dev/null || true
         EOF
 
     - name: Update Local Repository Index & Prepare Artifacts
       run: |
         mkdir -p dist-package
-        cp ../*.deb dist-package/ 2>/dev/null || true
-        cp ../*.changes dist-package/ 2>/dev/null || true
-        cp ../*.buildinfo dist-package/ 2>/dev/null || true
+        # Gom các file từ root workspace vào thư mục dist-package để chuẩn bị upload
+        cp $GITHUB_WORKSPACE/*.deb $GITHUB_WORKSPACE/*.changes $GITHUB_WORKSPACE/*.buildinfo dist-package/ 2>/dev/null || true
         
-        cp ../*.deb /local-repo/ 2>/dev/null || true
+        # Đồng bộ vào kho lưu trữ nội bộ hệ thống như ban đầu
+        sudo cp dist-package/*.deb /local-repo/ 2>/dev/null || true
         cd /local-repo
-        dpkg-scanpackages . /dev/null > Packages
-        gzip -fk Packages
+        sudo dpkg-scanpackages . /dev/null > Packages
+        sudo gzip -fk Packages
+
+    - name: Upload Artifacts to GitHub Actions UX
+      uses: actions/upload-artifact@v4
+      with:
+        name: debian-sbuild-package-${{ matrix.name }}
+        path: dist-package/
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
