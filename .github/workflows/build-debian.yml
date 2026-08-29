@@ -81,31 +81,27 @@ jobs:
         EOF
         chmod +x setup-chroot.sh
 
-    # Bước 6: Cô lập hoàn toàn luồng kéo mã nguồn và xử lý phiên bản trực tiếp trong Chroot Debian
+    # Bước 6: Tải mã nguồn và xử lý phiên bản động khép kín hoàn toàn trong Chroot Debian
     - name: Download Source and Dynamic Versioning via Debian Chroot
       run: |
-        # 1. Tạo điểm mount ảo sẵn bên trong cấu trúc hệ thống của chroot
-        sudo mkdir -p /scratch/build-workspace 2>/dev/null || true
-        
-        # 2. Sử dụng lệnh mount hệ thống để liên kết không gian lưu trữ hiện tại của Host vào Chroot
-        sudo mount --bind $GITHUB_WORKSPACE /scratch/build-workspace
-
-        # 3. Sử dụng đường ống dẫn (pipeline) truyền tập lệnh và thực thi trực tiếp bằng quyền schroot
-        # Đã thay đổi định danh -c thành 'chroot:trixie-amd64-sbuild' để gọi trực tiếp phân vùng
+        # Thực thi tập lệnh độc lập bằng quyền schroot
         sudo schroot -c chroot:trixie-amd64-sbuild --directory=/tmp -- /bin/bash << 'EOF'
         set -e
         apt-get update
         
-        # Tải mã nguồn sạch từ kho lưu trữ Debian chính thức
+        # 1. Tạo thư mục làm việc nội bộ bên trong chroot để xử lý mã nguồn
+        mkdir -p /build-workspace
+        
+        # 2. Tải mã nguồn sạch từ kho lưu trữ Debian chính thức
         mkdir -p /tmp/src-download && cd /tmp/src-download
         apt-get source ${{ matrix.source }}
         
-        # Đồng bộ toàn bộ cây thư mục mã nguồn sang phân vùng làm việc chung đã mount chia sẻ
+        # 3. Định vị và sao chép mã nguồn vào thư mục làm việc nội bộ chroot vừa tạo
         SRC_DIR=$(find . -maxdepth 2 -name "changelog" -exec dirname {} \; | exec dirname {} \;)
         cp -r /tmp/src-download/$SRC_DIR/* /build-workspace/
         cd /build-workspace
 
-        # Thuật toán tự động tính toán mã phiên bản từ kho lưu trữ Debian
+        # 4. Thuật toán tự động tính toán mã phiên bản từ kho lưu trữ Debian
         dch_version() {
             local tag="${1:-v3}"
             local is_bp="${2:-0}"
@@ -145,12 +141,20 @@ jobs:
         echo "🔥 Phiên bản tính toán từ kho Debian: $DYNAMIC_VERSION"
         DEBCHANGE_RELEASE_HEURISTIC=log dch --v "$DYNAMIC_VERSION" "Automated Debian chroot build for ${{ matrix.v }}."
         
-        # Đóng gói tạo tệp mô tả mã nguồn gốc đầu vào (.dsc)
+        # 5. Đóng gói tạo tệp mô tả mã nguồn gốc (.dsc) và file nguồn tarball
         dpkg-source -b .
         EOF
+
+        # 5. Trích xuất toàn bộ mã nguồn sạch cùng file .dsc từ chroot ra ngoài không gian làm việc của máy host
+        # Vì chroot:trixie-amd64-sbuild nằm ở hệ tệp tin /scratch, ta copy trực tiếp dữ liệu ra ngoài host tại đây
+        sudo cp -r /scratch/build-workspace/* ./ 2>/dev/null || sudo cp -r /var/lib/schroot/chroots/trixie-amd64-sbuild/build-workspace/* ./ 2>/dev/null || true
+        sudo cp /scratch/tmp/src-download/*.dsc ./ 2>/dev/null || sudo cp /var/lib/schroot/chroots/trixie-amd64-sbuild/tmp/src-download/*.dsc ./ 2>/dev/null || true
+        sudo cp /scratch/tmp/src-download/*.tar.* ./ 2>/dev/null || sudo cp /var/lib/schroot/chroots/trixie-amd64-sbuild/tmp/src-download/*.tar.* ./ 2>/dev/null || true
         
-        # 4. Giải phóng phân vùng (Umount) sau khi trích xuất hoàn tất nhằm trả lại trạng thái sạch cho sbuild
-        sudo umount -l /scratch/build-workspace
+        # Cấp lại quyền sở hữu tệp tin cho user runner của GitHub Actions để sbuild có quyền đọc file ở bước sau
+        sudo chown -R runner:docker ./
+        echo "📸 Kiểm tra các tệp tin nguồn .dsc đã trích xuất ra máy host thành công:"
+        ls -la
 
     - name: Build Package via sbuild
       run: |
