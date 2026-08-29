@@ -68,11 +68,12 @@ jobs:
       run: |
         cat << 'EOF' > setup-chroot.sh
         #!/bin/sh
-        echo "deb-src http://deb.debian.org/debian/ trixie main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/debian-sources-src.list
+        echo "deb-src http://deb.debian.org/debian/ trixie main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/sources.list
+        echo "deb http://deb.debian.org/debian/ trixie main non-free-firmware contrib non-free" >> /etc/apt/sources.list
         
         if [ "${{ matrix.is_bp }}" -eq 1 ]; then
-          echo "deb http://deb.debian.org/debian/ trixie-backports main contrib non-free non-free-firmware" >> /etc/apt/sources.list
-          echo "deb-src http://deb.debian.org/debian/ trixie-backports main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/debian-sources-src.list
+          echo "deb http://deb.debian.org/debian/ trixie-backports main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/bp-sources.list
+          echo "deb-src http://deb.debian.org/debian/ trixie-backports main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/bp-sources.list
         fi
 
         echo "${{ matrix.extra_repos }}" > /etc/apt/sources.list.d/local-repo.list
