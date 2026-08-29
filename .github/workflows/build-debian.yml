@@ -210,7 +210,7 @@ jobs:
         fi
 
         # Xuất các biến môi trường trực tiếp ra máy host để sbuild tự động kế thừa vào chroot
-        # Giữ nguyên DEB_BUILD_OPTIONS=parallel=6 nocheck nodoc noautodbgsym từ tệp JSON của bạn
+        # Khắc phục triệt để bằng cách không dùng cờ --env nguy hiểm
         export DEB_BUILD_OPTIONS="${{ matrix.DEB_BUILD_OPTIONS }}"
         export DEB_BUILD_PROFILES="${{ matrix.DEB_BUILD_PROFILES }}"
         export DEB_CFLAGS_APPEND="$BASE_FLAGS"
@@ -220,12 +220,17 @@ jobs:
         sudo chmod -R 777 $GITHUB_WORKSPACE
 
         # Cấu hình các hook hành động ổn định thông qua .sbuildrc của Perl theo chuẩn sbuild core
+        # Khai báo cấu trúc ENVIRONMENT_FILTER để sbuild cho phép các biến môi trường custom lọt vào trong chroot
         mkdir -p $HOME
         cat << 'PERL' > $HOME/.sbuildrc
         our $bindmounts = [ '/local-repo' ];
         our $chroot_setup_commands = [
             'printf "Package: *\nPin: origin \"\"\nPin-Priority: 1001\n" > /etc/apt/preferences.d/pin-glibc',
             '/bin/bash ' . qx(pwd | tr -d '\n') . '/setup-chroot.sh'
+        ];
+        our $environment_filter = [
+            'PATH', 'DEB_BUILD_OPTIONS', 'DEB_BUILD_PROFILES', 
+            'DEB_CFLAGS_APPEND', 'DEB_CXXFLAGS_APPEND'
         ];
         1;
         PERL
@@ -234,19 +239,22 @@ jobs:
         sg sbuild << 'EOF'
         set -e
         
-        # Bắt chính xác duy nhất tệp .dsc chính thức của bubblewrap đã được dch đổi tên phiên bản mới
-        DSC_FILE=$(ls bubblewrap_*.dsc | head -n 1)
+        # Tìm chính xác tệp .dsc chứa chuỗi danh tính ct05v theo đúng yêu cầu của bạn
+        DSC_FILE=$(ls *ct05v*.dsc | head -n 1)
+        
+        if [ -z "$DSC_FILE" ]; then
+            echo "❌ Không tìm thấy tệp .dsc tùy chỉnh chứa chuỗi ct05v!"
+            exit 1
+        fi
+        
         echo "🚀 Tiến hành biên dịch tệp nguồn sbuild theo cấu trúc tham khảo chuẩn hóa: $DSC_FILE"
 
-        # Khởi chạy sbuild sạch, nạp cấu hình DEB_BUILD_OPTIONS động qua biến môi trường của host
+        # Chạy sbuild sạch sẽ, kế thừa trực tiếp các biến export thông qua bộ lọc .sbuildrc
         sbuild -d trixie \
           --chroot-mode=schroot \
           --build-dep-resolver=apt \
           --debbuildopt="-b -us -uc -A" \
-          --env=DEB_BUILD_OPTIONS="$DEB_BUILD_OPTIONS" \
-          --env=DEB_BUILD_PROFILES="$DEB_BUILD_PROFILES" \
-          --env=DEB_CFLAGS_APPEND="$DEB_CFLAGS_APPEND" \
-          --env=DEB_CXXFLAGS_APPEND="$DEB_CXXFLAGS_APPEND" \
+          --debbuildopt="--build-profiles=$DEB_BUILD_PROFILES" \
           $DSC_FILE
         EOF
 
