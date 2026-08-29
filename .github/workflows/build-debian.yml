@@ -187,23 +187,32 @@ jobs:
     # Bước 7: Tiến hành sbuild biên dịch gói sạch sẽ
     - name: Build Package via sbuild
       run: |
-        # Tìm tệp .dsc ở thư mục hiện tại của host
-        DSC_FILE=$(ls *.dsc)
+        # Chỉ tìm chính xác tệp .dsc phiên bản mới tạo (+ct05) ở thư mục hiện tại của host
+        DSC_FILE=$(ls *+ct05*.dsc | head -n 1)
         echo "🚀 Tìm thấy file DSC đầu vào cho sbuild: $DSC_FILE"
         
+        if [ -z "$DSC_FILE" ]; then
+          echo "❌ Không tìm thấy file .dsc hợp lệ để build!"
+          exit 1
+        fi
+        
+        # Thiết lập các cờ tối ưu hóa kiến trúc phần cứng (Compiler Flags)
         BASE_FLAGS="-march=${{ matrix.v == 'v4' && 'x86-64-v4' || 'x86-64-v3' }} -${{ matrix.flag }}"
         if [ "${{ matrix.lto }}" -eq 1 ]; then
           BASE_FLAGS="$BASE_FLAGS -flto=auto"
         fi
         
-        sg sbuild -c "sbuild -d trixie \
+        # Thực thi lệnh sbuild với cú pháp chuẩn hóa tùy chọn dòng lệnh
+        # Lưu ý: Các cờ cấu hình hệ thống sbuild đặt trước, tệp nguồn .dsc đặt ở cuối cùng
+        sg sbuild -c "sbuild \
+          -d trixie \
           --bindmounts=/local-repo \
           --chroot-setup-commands=\$(pwd)/setup-chroot.sh \
           --debbuildopt='-b -us -uc' \
           --env=DEB_BUILD_OPTIONS='${{ matrix.DEB_BUILD_OPTIONS }}' \
           --env=DEB_CFLAGS_APPEND='$BASE_FLAGS' \
           --env=DEB_CXXFLAGS_APPEND='$BASE_FLAGS' \
-          \$DSC_FILE"
+          $DSC_FILE"
 
     - name: Update Local Repository Index & Prepare Artifacts
       run: |
