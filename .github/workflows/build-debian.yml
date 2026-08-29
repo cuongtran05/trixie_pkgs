@@ -68,7 +68,7 @@ jobs:
     # Bước cấu hình: Khởi tạo các hook lệnh bằng cơ chế bảo vệ biến môi trường
     - name: Configure Repository inside sbuild chroot
       env:
-        MATRIX_EXTRA_REPOS: ${{ matrix.extra_repos }}
+        MATRIX_EXTRA_REPOS: ${{ join(matrix.extra_repos, ' ') }}
         MATRIX_CHROOT_SETUP: ${{ matrix.chroot_setup }}
       run: |
         cat << 'EOF' > setup-chroot.sh
