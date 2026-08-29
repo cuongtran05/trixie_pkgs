@@ -255,12 +255,12 @@ jobs:
         
         echo "🚀 Tiến hành biên dịch tệp nguồn sbuild tại không gian an toàn: /tmp/sbuild-workspace/$DSC_FILE"
 
-        # Chuyển đổi cờ sang -B để đóng gói các file binary phụ thuộc kiến trúc, loại bỏ xung đột logic của dpkg-buildpackage
+        # Lược bỏ hoàn toàn các cờ phân loại gói -b/-B/-A để sbuild tự vận hành cờ mặc định sạch sẽ
+        # Chỉ giữ lại duy nhất hai tùy chọn tắt ký số không gian nguồn
         sbuild -d trixie \
           --chroot-mode=schroot \
           --build-dep-resolver=apt \
           --nolog \
-          --debbuildopt="-B" \
           --debbuildopt="-us" \
           --debbuildopt="-uc" \
           $DSC_FILE
