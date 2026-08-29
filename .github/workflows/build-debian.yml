@@ -198,7 +198,9 @@ jobs:
         export DEB_CFLAGS_APPEND="$BASE_FLAGS"
         export DEB_CXXFLAGS_APPEND="$BASE_FLAGS"
 
-        # Đảm bảo cấp quyền thực thi cho file cấu hình chroot ngoài máy host
+        # ĐÃ SỬA LỖI QUYỀN TRUY CẬP: Cấp quyền đọc/ghi tối đa cho toàn bộ thư mục làm việc hiện tại
+        # Điều này giúp user sbuild nội bộ bên trong chroot không bị lỗi Permission denied khi truy cập file dsc/tar
+        sudo chmod -R 777 $GITHUB_WORKSPACE
         chmod +x $(pwd)/setup-chroot.sh
 
         # 2. Cấu hình TOÀN BỘ các hook hành động thông qua .sbuildrc của Perl
@@ -222,8 +224,7 @@ jobs:
         DSC_FILE=$(ls *ct05v*.dsc | head -n 1)
         echo "🚀 Tiến hành biên dịch tệp nguồn sbuild: $DSC_FILE"
 
-        # ĐÃ CẢI TIẾN: Bổ sung cờ cứng -o DEB_BUILD_OPTIONS="nocheck" trực tiếp vào sbuild dòng lệnh
-        # Điều này đảm bảo dpkg-buildpackage tuyệt đối KHÔNG chạy test suite của bubblewrap trong môi trường thiếu quyền
+        # Sử dụng tùy chọn loại bỏ kiểm tra lỗi nghiêm ngặt và bỏ qua test suite hoàn toàn
         sbuild -d trixie \
           --chroot-mode=schroot \
           --build-dep-resolver=apt \
