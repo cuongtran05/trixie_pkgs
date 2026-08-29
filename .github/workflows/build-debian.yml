@@ -84,14 +84,14 @@ jobs:
     # Bước 6: Tải mã nguồn, xử lý phiên bản và tạo file .dsc chuẩn cấu trúc Debian Upstream
     - name: Download Source and Dynamic Versioning via Debian Chroot
       run: |
-        # Thực thi tập lệnh độc lập bằng schroot, chạy hoàn toàn trong thư mục /tmp an toàn của chroot
+        # Thực thi tập lệnh hoàn toàn từ bên trong schroot để tận dụng quyền ghi trực tiếp ra host
         sudo schroot -c chroot:trixie-amd64-sbuild --directory=/tmp -- /bin/bash << 'EOF'
         set -e
         apt-get update
         apt-get install -y devscripts dpkg-dev
         
-        # 1. Di chuyển vào thư mục tạm hệ thống của chroot để tải mã nguồn
-        cd /tmp
+        # 1. Tạo một thư mục tạm biệt lập bên trong môi trường chroot để xử lý
+        mkdir -p /tmp/debian-build-env && cd /tmp/debian-build-env
         
         # 2. Tải trực tiếp mã nguồn sạch từ kho lưu trữ Debian chính thức
         apt-get source ${{ matrix.source }}
@@ -130,7 +130,7 @@ jobs:
                 if [ "$is_bp" -eq 1 ]; then
                     full_ver=$(apt-cache "${apt_clean_opts[@]}" madison "$bin" 2>/dev/null | grep -E "backports|~bpo" | grep -v -E "file:|ct05" | head -n 1 | awk -F'|' '{print $2}' | tr -d ' ')
                 else
-                    full_ver=$(apt-cache "${apt_clean_opts[@]}" madison "$bin" 2>/dev/null | grep -v -E "file:|ct05" | head -n 1 | awk -F'|' '{print $2}' | tr -d ' ')
+                    full_ver=$(apt-cache "${apt_clean_opts[@]}" madison "$bin" 2>/dev/null | grep -E "file:|ct05" | head -n 1 | awk -F'|' '{print $2}' | tr -d ' ')
                 fi
                 if [ -n "$full_ver" ] && [ "$full_ver" != "(none)" ]; then
                     if [[ "$full_ver" == *+b[0-9]* ]]; then break; fi
@@ -155,26 +155,18 @@ jobs:
         export DEBFULLNAME="Cường Trần"
         dch --force-bad-version --v "$DYNAMIC_VERSION" "Automated Debian chroot build for ${{ matrix.v }}."
         
-        # 5. Quay trở lại thư mục /tmp để tạo tệp mô tả mã nguồn (.dsc) chuẩn cấu trúc
-        cd /tmp
+        # 5. Quay trở lại thư mục tạm để tạo tệp mô tả mã nguồn (.dsc) chuẩn cấu trúc
+        cd /tmp/debian-build-env
         dpkg-source -b "$SRC_DIR"
+        
+        # 6. ĐỒNG BỘ TRỰC TIẾP: Copy thành phẩm thẳng ra thư mục workspace của host từ bên trong chroot
+        # schroot mặc định luôn tự động mount thư mục của GitHub Actions vào cùng đường dẫn bên trong nó
+        cp /tmp/debian-build-env/*.dsc ${{ github.workspace }}/ 2>/dev/null || true
+        cp /tmp/debian-build-env/*.tar.* ${{ github.workspace }}/ 2>/dev/null || true
+        cp -r /tmp/debian-build-env/$SRC_DIR/* ${{ github.workspace }}/ 2>/dev/null || true
         EOF
-
-        # 6. Sao chép trực tiếp dữ liệu thành phẩm từ thư mục vật lý của chroot ra ngoài máy host
-        CHROOT_PATH="/scratch"
-        [ ! -d "$CHROOT_PATH/tmp" ] && CHROOT_PATH="/var/lib/schroot/chroots/trixie-amd64-sbuild"
         
-        # Trích xuất các tệp tin mô tả nguồn (.dsc, .tar.xz) ra ngoài thư mục host
-        sudo cp $CHROOT_PATH/tmp/*.dsc ./ 2>/dev/null || true
-        sudo cp $CHROOT_PATH/tmp/*.tar.* ./ 2>/dev/null || true
-        
-        # Sao chép cây thư mục mã nguồn ra ngoài máy host phục vụ sbuild đọc tệp rules/control
-        SRC_DIR_NAME=$(find $CHROOT_PATH/tmp/ -maxdepth 2 -name "changelog" -exec dirname {} \; | awk -F'/' '{print $5}')
-        if [ -n "$SRC_DIR_NAME" ]; then
-            sudo cp -r $CHROOT_PATH/tmp/$SRC_DIR_NAME/* ./ 2>/dev/null || true
-        fi
-        
-        # Cấp lại quyền sở hữu tệp tin cho user runner của GitHub Actions để sbuild tiến hành build ở bước sau
+        # 7. Cấp lại quyền sở hữu tệp tin cho user runner ngoài host để sbuild tiến hành build ở bước sau
         sudo chown -R runner:docker ./
         echo "📸 Kiểm tra các tệp tin nguồn đầu vào cho sbuild tại máy host:"
         ls -la
