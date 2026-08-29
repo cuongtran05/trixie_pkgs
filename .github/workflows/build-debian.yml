@@ -198,9 +198,10 @@ jobs:
         export DEB_CFLAGS_APPEND="$BASE_FLAGS"
         export DEB_CXXFLAGS_APPEND="$BASE_FLAGS"
 
-        # 2. Khởi tạo cấu hình bindmounts nội bộ thông qua .sbuildrc để tránh dùng cờ dòng lệnh
+        # 2. ĐÃ SỬA LỖI: Sử dụng 'our' để khai báo biến cấu hình Perl hợp lệ trong .sbuildrc
         mkdir -p $HOME
-        echo "\$bindmounts = [ '/local-repo' ];" > $HOME/.sbuildrc
+        echo "our \$bindmounts = [ '/local-repo' ];" > $HOME/.sbuildrc
+        echo "1;" >> $HOME/.sbuildrc
 
         # 3. Sử dụng Here-Doc << 'EOF' để thực thi lệnh an toàn trong nhóm sbuild
         sg sbuild << 'EOF'
