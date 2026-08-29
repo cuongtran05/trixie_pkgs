@@ -105,10 +105,17 @@ jobs:
     # Bước 6: Tải mã nguồn, xử lý phiên bản và trích xuất vật lý file .dsc ra ngoài máy host
     - name: Download Source and Dynamic Versioning via Debian Chroot
       run: |
-        # Thực thi TOÀN BỘ quy trình trong một phiên chroot duy nhất để tránh bị xóa dữ liệu tạm thời
-        # Kết quả nén tar sẽ được stream trực tiếp từ trong chroot ra ngoài máy host thông qua stdout
+        # Lưu trữ tạm các tệp cấu hình tùy chỉnh của bạn trên Host trước khi tiến hành đồng bộ nguồn
+        mkdir -p /tmp/my-custom-debian
+        cp -r debian/ CMakeLists.txt /tmp/my-custom-debian/ 2>/dev/null || true
+
+        # Thực thi quy trình trong phiên chroot, cấp quyền tối đa cho thư mục tmp để user _apt không bị từ chối truy cập (Permission denied)
         sudo schroot -c chroot:trixie-amd64-sbuild --directory=/tmp -- /bin/bash << 'EOF' > output_env.tar
         set -e
+        
+        # Sửa lỗi phân quyền cho hệ thống apt sandbox bên trong chroot
+        chmod 1777 /tmp
+        chown -R _apt:root /var/lib/apt/lists/
         
         # Kích hoạt kho deb-src của Debian bên trong chroot
         sudo sed -i 's/^#\s*deb-src/deb-src/g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
@@ -193,11 +200,20 @@ jobs:
         tar -xf output_env.tar -C $GITHUB_WORKSPACE/
         rm -f output_env.tar
 
-        # Di chuyển cây thư mục mã nguồn từ thư mục con ra thẳng gốc thư mục làm việc của host để sbuild nhận diện rộng rãi
-        SRC_DIR_NAME=$(find ./ -maxdepth 2 -name "changelog" -exec dirname {} \; | awk -F'/' '{print $2}')
+        # Xác định thư mục nguồn vừa được bung ra từ kho lưu trữ Debian
+        SRC_DIR_NAME=$(find ./ -maxdepth 2 -name "changelog" -exec dirname {} \; | grep -v "/tmp/" | awk -F'/' '{print $2}' | head -n 1)
+        
         if [ -n "$SRC_DIR_NAME" ] && [ "$SRC_DIR_NAME" != "." ]; then
+            # Ghi đè bắt buộc các file đóng gói tùy chỉnh (control, rules, CMake) của bạn vào bên trong thư mục nguồn
+            cp -r /tmp/my-custom-debian/debian/* $SRC_DIR_NAME/debian/ 2>/dev/null || true
+            cp /tmp/my-custom-debian/CMakeLists.txt $SRC_DIR_NAME/ 2>/dev/null || true
+            
+            # Đồng bộ lại mã nguồn ra ngoài root workspace của host để sbuild thực thi diện rộng thuận tiện
             cp -r $SRC_DIR_NAME/* ./ 2>/dev/null || true
         fi
+        
+        # Đóng gói lại tệp tin .dsc chuẩn hóa ngay trên host dựa trên cấu trúc tích hợp mới để tránh lỗi sai lệch checksum hashes
+        dpkg-source -b ./ 2>/dev/null || true
         
         # Cấp lại quyền sở hữu tệp tin cho user runner của GitHub Actions để sbuild có toàn quyền đọc cấu hình
         sudo chown -R runner:docker ./
@@ -236,11 +252,11 @@ jobs:
         sg sbuild << 'EOF'
         set -e
         
-        # Xác định chính xác duy nhất tệp .dsc phiên bản sửa đổi vừa tạo
-        DSC_FILE=$(ls *ct05v*.dsc | head -n 1)
+        # Xác định chính xác duy nhất tệp .dsc phiên bản sửa đổi cấu trúc hoàn chỉnh vừa tạo
+        DSC_FILE=$(ls *.dsc | head -n 1)
         echo "🚀 Tiến hành biên dịch tệp nguồn sbuild theo cấu trúc tham khảo chuẩn hóa: $DSC_FILE"
 
-        # Khởi chạy sbuild sạch, ép tắt chạy test-suite của bubblewrap bằng cấu hình DEB_BUILD_OPTIONS trực tiếp
+        # Khởi chạy sbuild sạch, ép tắt chạy test-suite bằng cấu hình DEB_BUILD_OPTIONS trực tiếp
         sbuild -d trixie \
           --chroot-mode=schroot \
           --build-dep-resolver=apt \
