@@ -33,6 +33,15 @@ jobs:
     name: Build package ${{ matrix.name }} via sbuild (Unshare)
 
     steps:
+    # - name: Free Disk Space (Ubuntu)
+    #   uses: jlumbroso/free-disk-space@v1.3.1
+    #   with:
+    #     tool-cache: true      
+    #     android: true         
+    #     dotnet: true         
+    #     haskell: true         
+    #     swap: false 
+
     - name: Checkout repository
       uses: actions/checkout@v4
 
@@ -68,19 +77,18 @@ jobs:
         cat $HOME/.config/sbuild/config.pl
 
     - name: Download Source and Dynamic Versioning via Host/Apt
-      env:
-        # Cấu hình apt tạm thời ngoài máy host để tải source code của trixie
-        APT_CONFIG_CONTENT: |
-          Dir::Etc::sourcelist "/etc/apt/sources.list";
-          Dir::Etc::sourceparts "/dev/null";
       run: |
-        # Chuẩn bị một file sources.list chứa deb-src của Trixie ngay trên host để tải source sạch
-        echo "deb-src http://debian.org trixie main contrib non-free non-free-firmware" > /tmp/trixie-src.list
+        # 1. Thêm trực tiếp kho lưu trữ mã nguồn deb-src của Debian Trixie vào máy host Ubuntu
+        sudo sh -c 'echo "deb-src http://debian.org trixie main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/trixie-src.list'
         
+        # 2. Cập nhật cơ sở dữ liệu apt của máy host để ghi nhận kho lưu trữ mới
+        sudo apt-get update
+        
+        # 3. Tạo không gian làm việc sạch ngoài workspace của Host
         mkdir -p $GITHUB_WORKSPACE/debian-build-env && cd $GITHUB_WORKSPACE/debian-build-env
         
-        # Tải mã nguồn sử dụng file source tạm thời
-        apt-get source --config-file <(echo "$APT_CONFIG_CONTENT") -o Dir::Etc::sourcelist=/tmp/trixie-src.list ${{ matrix.source }}
+        # Tải mã nguồn sạch của gói từ kho Debian Trixie vừa cấu hình
+        apt-get source ${{ matrix.source }}
         
         SRC_DIR=""
         for d in */; do
@@ -109,7 +117,7 @@ jobs:
             local apt_clean_opts=(-o "Dir::Etc::preferences=/dev/null" -o "Dir::Etc::preferencesparts=/dev/null" -o "Dir::Etc::sourceparts=/dev/null")
             local search_list="$src_name"
             
-            # Giả định phiên bản trên kho trixie nếu không có cache madison
+            # Đồng bộ số phiên bản mặc định
             full_ver="$local_changelog_ver"
             
             local epoch=""
@@ -129,7 +137,7 @@ jobs:
         export DEBFULLNAME="Cường Trần"
         dch --force-bad-version --v "$DYNAMIC_VERSION" "Automated Debian unshare chroot rebuild for ${{ matrix.v }}."
         
-        # Sinh tệp .dsc mới ngay trên máy host
+        # Sinh tệp bản dựng .dsc mới ngay trên máy host
         dpkg-source -b "$SRC_DIR"
         
         echo "📸 Kiểm tra các tệp tin nguồn đích thực tại workspace máy host:"
