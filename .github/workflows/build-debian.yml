@@ -169,7 +169,7 @@ jobs:
         DEB_BUILD_PROFILES: "${{ matrix.DEB_BUILD_PROFILES }}"
         SBUILD_TMPDIR: "/tmp"
         
-        # 2. 🌟 TRUYỀN BIẾN ĐỘNG CẤU HÌNH REPO TỪ JSON SANG CONFIG.PL
+        # 2. Truyền biến động cấu hình repo từ JSON sang file config.pl
         IS_BP: "${{ matrix.is_bp }}"
         MATRIX_EXTRA_REPOS: "${{ join(matrix.extra_repos, ' ') }}"
         MATRIX_CHROOT_SETUP: "${{ matrix.chroot_setup }}"
@@ -182,12 +182,11 @@ jobs:
             exit 1
         fi
         
-        echo "🚀 Tiến hành biên dịch sbuild unshare với cơ chế nạp repo tự động..."
+        echo "🚀 Tiến hành biên dịch sbuild unshare sạch (Cấu hình builder nạp qua config.pl)..."
         
-        # Thực thi sbuild. File config.pl sẽ tự động xử lý toàn bộ logic repo bên trong container ảo.
+        # Lược bỏ cờ lỗi --chroot-builder bên ngoài CLI. Sbuild sẽ tự đọc nó trong file config.pl
         sbuild -d trixie \
           --chroot-mode=unshare \
-          --chroot-builder=mmdebstrap \
           --build-dep-resolver=apt \
           --no-clean-source \
           --nolog \
