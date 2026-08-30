@@ -168,8 +168,11 @@ jobs:
     - name: Whitelist Environment Variables for sbuild
       run: |
         mkdir -p $HOME/.config/sbuild
-        # Tạo file chứa danh sách các biến môi trường được phép giữ lại khi sbuild chạy
-        cat << 'PERL' > $HOME/.config/sbuild/sbuild.conf
+        
+        # 🌟 SỬA ĐỔI: Thay đổi đường dẫn ghi từ sbuild.conf thành config.pl (Dùng dấu >> để nối tiếp vào cuối file)
+        cat << 'PERL' >> $HOME/.config/sbuild/config.pl
+        
+        # Bổ sung các biến ma trận vào bộ lọc môi trường toàn cục để sbuild không xóa sạch khi khởi chạy
         our $environment_filter = [
             'PATH', 'DEB_BUILD_OPTIONS', 'DEB_BUILD_PROFILES', 
             'DEB_CFLAGS_APPEND', 'DEB_CXXFLAGS_APPEND',
@@ -177,6 +180,9 @@ jobs:
         ];
         1;
         PERL
+        
+        echo "📸 Kiểm tra tệp cấu hình sbuild cuối cùng sau khi bổ sung whitelist:"
+        cat $HOME/.config/sbuild/config.pl
 
     - name: Build Package via sbuild (Unshare Native Mode)
       run: |
