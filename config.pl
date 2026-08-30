@@ -62,40 +62,6 @@ $build_environment = {
 if ($ENV{'DEB_BUILD_OPTIONS'}) { $build_environment->{'DEB_BUILD_OPTIONS'} = $ENV{'DEB_BUILD_OPTIONS'}; }
 if ($ENV{'DEB_BUILD_PROFILES'}) { $build_environment->{'DEB_BUILD_PROFILES'} = $ENV{'DEB_BUILD_PROFILES'}; }
 
-# =========================================================================
-# 🌟 ĐOẠN KHẮC PHỤC: TỰ ĐỘNG KHỞI TẠO REPO ĐỘNG CHO CHẾ ĐỘ UNSHARE
-# =========================================================================
-# 5. Khai báo liên kết thư mục local-repo từ máy Host vào container ảo
-our $bindmounts = [ "$ENV{HOME}/local-repo:/local-repo" ];
-
-# 6. Chèn trực tiếp cấu hình danh sách Repo sạch thông qua lệnh thực thi Hook an toàn
-our $chroot_setup_commands = [
-    # Ghi đè file Pin cho glibc / apt preference
-    'printf "Package: *\nPin: origin \"\"\nPin-Priority: 1001\n" > /etc/apt/preferences.d/pin-glibc',
-    
-    # Khởi tạo danh sách repo nền cho Debian Trixie (Đảm bảo đầy đủ components)
-    'echo "deb http://deb.debian.org/debian trixie main non-free-firmware contrib non-free" > /etc/apt/sources.list.d/trixie.list',
-    'echo "deb-src http://deb.debian.org/debian trixie main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/trixie.list',
-    'echo "deb http://deb.debian.org/debian-security trixie-security main non-free-firmware contrib non-free" >> /etc/apt/sources.list.d/trixie.list',
-    'echo "deb-src http://deb.debian.org/debian-security trixie-security main non-free-firmware contrib non-free" >> /etc/apt/sources.list.d/trixie.list',
-    
-    # Kiểm tra biến môi trường để nạp repo Backports từ ma trận JSON
-    $ENV{'IS_BP'} eq "1" ? (
-        'echo "deb http://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/bp-sources.list',
-        'echo "deb-src http://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/bp-sources.list'
-    ) : (),
-
-    # Kiểm tra và nạp danh sách các repo phụ (extra_repos) hoặc trỏ về kho local-repo mặc định
-    $ENV{'MATRIX_EXTRA_REPOS'} ne "" ? (
-        'echo "' . $ENV{'MATRIX_EXTRA_REPOS'} . '" > /etc/apt/sources.list.d/local-repo.list'
-    ) : (
-        'echo "deb [trusted=yes] file:///local-repo ./" > /etc/apt/sources.list.d/local-repo.list'
-    ),
-
-    # Khởi chạy chuỗi lệnh setup mở rộng (Pin gói, update nâng cao từ file JSON)
-    $ENV{'MATRIX_CHROOT_SETUP'} ne "" ? $ENV{'MATRIX_CHROOT_SETUP'} : 'apt-get update'
-];
-
 $unshare_mmdebstrap_keep_tarball = 1;
 if ($ENV{'SBUILD_TMPDIR'}) { $unshare_tmpdir_template = $ENV{'SBUILD_TMPDIR'} . '/tmp.XXXXXXXXXX'; }
 

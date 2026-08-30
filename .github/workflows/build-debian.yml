@@ -54,6 +54,12 @@ jobs:
         # Thêm user vào nhóm sbuild để chạy sbuild không cần sudo
         sudo sbuild-adduser $USER
 
+    - name: Create Base sbuild Chroot Tarball via mmdebstrap
+      run: |
+        mkdir -p $HOME/.cache/sbuild
+        echo "🚀 Đang dựng hệ thống nền trixie-amd64.tar bằng mmdebstrap..."
+        mmdebstrap --variant=buildd trixie $HOME/.cache/sbuild/trixie-amd64.tar http://deb.debian.org/debian
+
     - name: Setup Local Repository Structure
       run: |
         mkdir -p $HOME/local-repo
@@ -64,23 +70,63 @@ jobs:
       run: |
         mkdir -p $HOME/.config/sbuild
         
-        # Sao chép trực tiếp file config.pl từ mã nguồn vào thư mục cấu hình chuẩn của sbuild
+        # 1. Sao chép trực tiếp file gốc vào thư mục cấu hình
         cp config.pl $HOME/.config/sbuild/config.pl
         
+        # 2. Sinh trực tiếp các lệnh Hook bằng Bash dựa trên dữ liệu Ma trận JSON hiện tại
+        # Giải pháp này triệt tiêu hoàn toàn việc đọc biến $ENV trong Hook của sbuild
+        
+        echo "⏳ Đang kết xuất cấu hình Hook động từ Ma trận vào config.pl..."
+        
+        cat << 'EOF' >> $HOME/.config/sbuild/config.pl
+
         # Bổ sung cấu hình bổ trợ liên kết thư mục local-repo vào môi trường Unshare
-        cat << 'PERL' >> $HOME/.config/sbuild/config.pl
         our $bindmounts = [ "$ENV{HOME}/local-repo:/local-repo" ];
+
+        # Khởi chạy chuỗi lệnh setup mở rộng (Đã giải mã từ ma trận JSON ngay trên Host)
+        our $chroot_setup_commands = [
+            'printf "Package: *\\nPin: origin \"\"\\nPin-Priority: 1001\\n" > /etc/apt/preferences.d/pin-glibc',
+            'echo "deb http://deb.debian.org/debian trixie main non-free-firmware contrib non-free" > /etc/apt/sources.list.d/trixie.list',
+            'echo "deb-src http://deb.debian.org/debian trixie main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/trixie.list',
+            'echo "deb http://deb.debian.org/debian-security trixie-security main non-free-firmware contrib non-free" >> /etc/apt/sources.list.d/trixie.list',
+            'echo "deb-src http://deb.debian.org/debian-security trixie-security main non-free-firmware contrib non-free" >> /etc/apt/sources.list.d/trixie.list',
+        EOF
+
+        # Xử lý logic Backports bằng Bash thay vì Perl toán tử ba ngôi
+        if [ "${{ matrix.is_bp }}" = "1" ]; then
+            cat << 'EOF' >> $HOME/.config/sbuild/config.pl
+            'echo "deb http://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/bp-sources.list',
+            'echo "deb-src http://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/bp-sources.list',
+        EOF
+        fi
+
+        # Xử lý logic chèn danh sách repo bổ sung từ ma trận JSON
+        EXTRA_REPOS_JOINED="${{ join(matrix.extra_repos, ' ') }}"
+        if [ -n "$EXTRA_REPOS_JOINED" ]; then
+            echo "            'echo \"$EXTRA_REPOS_JOINED\" > /etc/apt/sources.list.d/local-repo.list'," >> $HOME/.config/sbuild/config.pl
+        else
+            echo "            'echo \"deb [trusted=yes] file:///local-repo ./\" > /etc/apt/sources.list.d/local-repo.list'," >> $HOME/.config/sbuild/config.pl
+        fi
+
+        # Xử lý chèn chuỗi lệnh tùy biến chroot setup (Ví dụ: thiết lập Pin APT)
+        CHROOT_SETUP_CMD="${{ matrix.chroot_setup }}"
+        if [ -n "$CHROOT_SETUP_CMD" ]; then
+            # Escape dấu nháy đơn để không làm vỡ mảng Perl
+            CHROOT_SETUP_CMD_ESCAPED=$(echo "$CHROOT_SETUP_CMD" | sed "s/'/\\\\'/g")
+            echo "            '$CHROOT_SETUP_CMD_ESCAPED'," >> $HOME/.config/sbuild/config.pl
+        else
+            echo "            'apt-get update'," >> $HOME/.config/sbuild/config.pl
+        fi
+
+        # Đóng mảng Perl hợp lệ
+        cat << 'EOF' >> $HOME/.config/sbuild/config.pl
+        ];
+
         1;
-        PERL
+        EOF
 
-        echo "📸 Kiểm tra tệp cấu hình sbuild cuối cùng để đảm bảo tính an toàn:"
+        echo "📸 Kiểm tra toàn bộ tệp cấu hình sbuild hợp nhất cuối cùng:"
         cat $HOME/.config/sbuild/config.pl
-
-    - name: Create Base sbuild Chroot Tarball via mmdebstrap
-      run: |
-        mkdir -p $HOME/.cache/sbuild
-        echo "🚀 Đang dựng hệ thống nền trixie-amd64.tar bằng mmdebstrap..."
-        mmdebstrap --variant=buildd trixie $HOME/.cache/sbuild/trixie-amd64.tar http://deb.debian.org/debian
 
     - name: Download Source and Dynamic Versioning via Host/Apt
       run: |
@@ -167,12 +213,8 @@ jobs:
 
     - name: Whitelist Environment Variables for sbuild
       run: |
-        mkdir -p $HOME/.config/sbuild
-        
-        # 🌟 SỬA ĐỔI: Thay đổi đường dẫn ghi từ sbuild.conf thành config.pl (Dùng dấu >> để nối tiếp vào cuối file)
+        # Bước này giữ nguyên để tiêm cờ tối ưu hóa (LTO, FLAG, v3/v4) vào bộ lọc biên dịch
         cat << 'PERL' >> $HOME/.config/sbuild/config.pl
-        
-        # Bổ sung các biến ma trận vào bộ lọc môi trường toàn cục để sbuild không xóa sạch khi khởi chạy
         our $environment_filter = [
             'PATH', 'DEB_BUILD_OPTIONS', 'DEB_BUILD_PROFILES', 
             'DEB_CFLAGS_APPEND', 'DEB_CXXFLAGS_APPEND',
@@ -180,9 +222,6 @@ jobs:
         ];
         1;
         PERL
-        
-        echo "📸 Kiểm tra tệp cấu hình sbuild cuối cùng sau khi bổ sung whitelist:"
-        cat $HOME/.config/sbuild/config.pl
 
     - name: Build Package via sbuild (Unshare Native Mode)
       run: |
