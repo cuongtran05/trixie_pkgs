@@ -2,8 +2,10 @@
 # CẤU HÌNH TRUNG TÂM TỐI ƯU HÓA HỆ THỐNG SBUILD THẾ HỆ MỚI (UNSHARE)
 # =========================================================================
 $chroot_mode = 'unshare';
-$chroot_builder = 'mmdebstrap';
 $build_dep_resolver = 'apt';
+
+$unshare_mmdebstrap_auto_create = 1; 
+$unshare_mmdebstrap_keep_tarball = 1;
 
 # 1. ĐỌC CẤU HÌNH ĐỘNG TỪ BIẾN MÔI TRƯỜNG DO SCRIPT BASH TRUYỀN VÀO
 my $use_lto     = $ENV{'LTO'} // "0";

@@ -182,12 +182,11 @@ jobs:
             exit 1
         fi
         
-        echo "🚀 Tiến hành kích hoạt sbuild unshare và ép mmdebstrap tự tạo chroot tức thì..."
+        echo "🚀 Kích hoạt sbuild unshare và tự động dựng chroot tạm thời qua mmdebstrap..."
         
-        # Sửa lỗi chí mạng: Thêm tham số --chroot-url để ép sbuild tự động tải base system về tạo chroot mới
-        sbuild -d trixie \
+        # Giải pháp: Ép sbuild tạo chroot on-the-fly bằng cách gộp URL kho lưu trữ vào cờ -d
+        sbuild -d trixie-http://deb.debian.org/debian \
           --chroot-mode=unshare \
-          --chroot-url=http://deb.debian.org/debian \
           --build-dep-resolver=apt \
           --no-clean-source \
           --nolog \
