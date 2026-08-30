@@ -73,8 +73,8 @@ our $chroot_setup_commands = [
     # Khởi tạo danh sách repo nền cho Debian Trixie (Đảm bảo đầy đủ components)
     'echo "deb http://deb.debian.org/debian trixie main non-free-firmware contrib non-free" > /etc/apt/sources.list.d/trixie.list',
     'echo "deb-src http://deb.debian.org/debian trixie main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/trixie.list',
-    'echo "deb http://deb.debian.org/debian trixie-security main non-free-firmware contrib non-free" >> /etc/apt/sources.list.d/trixie.list',
-    'echo "deb-src http://deb.debian.org/debian trixie-security main non-free-firmware contrib non-free" >> /etc/apt/sources.list.d/trixie.list',
+    'echo "deb http://deb.debian.org/debian-security trixie-security main non-free-firmware contrib non-free" >> /etc/apt/sources.list.d/trixie.list',
+    'echo "deb-src http://deb.debian.org/debian-security trixie-security main non-free-firmware contrib non-free" >> /etc/apt/sources.list.d/trixie.list',
     
     # Kiểm tra biến môi trường để nạp repo Backports từ ma trận JSON
     $ENV{'IS_BP'} eq "1" ? (
