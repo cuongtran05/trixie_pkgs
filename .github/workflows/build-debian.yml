@@ -187,6 +187,7 @@ jobs:
         # Thực thi sbuild. File config.pl sẽ tự động xử lý toàn bộ logic repo bên trong container ảo.
         sbuild -d trixie \
           --chroot-mode=unshare \
+          --chroot-builder=mmdebstrap \
           --build-dep-resolver=apt \
           --no-clean-source \
           --nolog \
