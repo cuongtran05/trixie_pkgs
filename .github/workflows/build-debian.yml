@@ -1,4 +1,4 @@
-name: Build Debian Trixie Package with sbuild
+name: Build Debian Trixie Package with sbuild (Unshare Mode)
 
 on:
   push:
@@ -30,100 +30,58 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.parse-json.outputs.matrix) }}
 
-    name: Build package ${{ matrix.name }} via sbuild
+    name: Build package ${{ matrix.name }} via sbuild (Unshare)
 
     steps:
-    # - name: Free Disk Space (Ubuntu)
-    #   uses: jlumbroso/free-disk-space@v1.3.1
-    #   with:
-    #     tool-cache: true      
-    #     android: true         
-    #     dotnet: true         
-    #     haskell: true         
-    #     swap: false           
-
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Install sbuild on host
+    - name: Install sbuild & mmdebstrap (Unshare Prerequisites)
       run: |
         sudo apt-get update
-        sudo apt-get install -y sbuild schroot debootstrap devscripts dpkg-dev debian-archive-keyring jq
+        sudo apt-get install -y sbuild mmdebstrap uidmap devscripts dpkg-dev debian-archive-keyring jq
+        # Kích hoạt unprivileged user namespaces nếu cần thiết
+        sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+        # Thêm user vào nhóm sbuild để chạy sbuild không cần sudo
         sudo sbuild-adduser $USER
 
     - name: Setup Local Repository Structure
       run: |
-        sudo mkdir -p /local-repo
-        sudo chown -R runner:docker /local-repo
-        touch /local-repo/Packages
-        cd /local-repo && dpkg-scanpackages . /dev/null > Packages
+        mkdir -p $HOME/local-repo
+        touch $HOME/local-repo/Packages
+        cd $HOME/local-repo && dpkg-scanpackages . /dev/null > Packages
 
-    # Bước 4: Tạo sbuild chroot cho Debian Trixie (Đã sửa URL từ debian.org thành deb.debian.org)
-    - name: Create sbuild chroot for Debian Trixie
+    - name: Deploy Custom config.pl & Inject Dynamic Environment
       run: |
-        sudo mkdir -p /scratch
-        # sudo sbuild-createchroot --make-sbuild-tarball=/var/lib/sbuild/trixie-amd64.tar.gz trixie /scratch http://deb.debian.org/debian
-        sudo sbuild-createchroot trixie /scratch http://deb.debian.org/debian
+        mkdir -p $HOME/.config/sbuild
+        
+        # Sao chép trực tiếp file config.pl từ mã nguồn vào thư mục cấu hình chuẩn của sbuild
+        cp config.pl $HOME/.config/sbuild/config.pl
+        
+        # Bổ sung cấu hình bổ trợ liên kết thư mục local-repo vào môi trường Unshare
+        cat << 'PERL' >> $HOME/.config/sbuild/config.pl
+        our $bindmounts = [ "$ENV{HOME}/local-repo:/local-repo" ];
+        1;
+        PERL
 
-    # Bước cấu hình: Khởi tạo các hook lệnh bằng cơ chế bảo vệ biến môi trường
-    - name: Configure Repository inside sbuild chroot
+        echo "📸 Kiểm tra tệp cấu hình sbuild cuối cùng để đảm bảo tính an toàn:"
+        cat $HOME/.config/sbuild/config.pl
+
+    - name: Download Source and Dynamic Versioning via Host/Apt
       env:
-        MATRIX_EXTRA_REPOS: ${{ join(matrix.extra_repos, ' ') }}
-        MATRIX_CHROOT_SETUP: ${{ matrix.chroot_setup }}
+        # Cấu hình apt tạm thời ngoài máy host để tải source code của trixie
+        APT_CONFIG_CONTENT: |
+          Dir::Etc::sourcelist "/etc/apt/sources.list";
+          Dir::Etc::sourceparts "/dev/null";
       run: |
-        cat << 'EOF' > setup-chroot.sh
-        #!/bin/sh
-        set -e
+        # Chuẩn bị một file sources.list chứa deb-src của Trixie ngay trên host để tải source sạch
+        echo "deb-src http://debian.org trixie main contrib non-free non-free-firmware" > /tmp/trixie-src.list
         
-        # 1. Ghi đè kho lưu trữ Debian Trixie sạch dạng tệp độc lập bảo vệ hệ thống
-        echo "deb http://deb.debian.org/debian/ trixie main non-free-firmware contrib non-free" > /etc/apt/sources.list.d/trixie.list
-        echo "deb-src http://deb.debian.org/debian/ trixie main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/trixie.list
+        mkdir -p $GITHUB_WORKSPACE/debian-build-env && cd $GITHUB_WORKSPACE/debian-build-env
         
-        # 2. Thêm kho lưu trữ Backports nếu ma trận yêu cầu
-        if [ "${{ matrix.is_bp }}" -eq 1 ]; then
-          echo "deb http://deb.debian.org/debian/ trixie-backports main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/bp-sources.list
-          echo "deb-src http://deb.debian.org/debian/ trixie-backports main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/bp-sources.list
-        fi
-
-        # 3. Ghi kho lưu trữ nội bộ an toàn tuyệt đối nhờ biến môi trường (bảo vệ dấu ngoặc vuông [])
-        if [ -n "$MATRIX_EXTRA_REPOS" ]; then
-          echo "$MATRIX_EXTRA_REPOS" > /etc/apt/sources.list.d/local-repo.list
-        else
-          echo "deb [trusted=yes] file:///local-repo ./" > /etc/apt/sources.list.d/local-repo.list
-        fi
+        # Tải mã nguồn sử dụng file source tạm thời
+        apt-get source --config-file <(echo "$APT_CONFIG_CONTENT") -o Dir::Etc::sourcelist=/tmp/trixie-src.list ${{ matrix.source }}
         
-        # 4. Thực thi các lệnh tùy chỉnh nâng cao (Pin gói, update apt,...) từ file json
-        if [ -n "$MATRIX_CHROOT_SETUP" ]; then
-          eval "$MATRIX_CHROOT_SETUP"
-        fi
-        EOF
-        
-        chmod +x setup-chroot.sh
-        echo "📸 Kiểm tra nội dung tệp setup-chroot.sh vừa tạo để đảm bảo không lỗi cú pháp:"
-        cat setup-chroot.sh
-
-    # Bước 6: Tải mã nguồn, xử lý phiên bản và trích xuất vật lý file .dsc ra ngoài máy host
-    - name: Download Source and Dynamic Versioning via Debian Chroot
-      run: |
-        # Thực thi quy trình trong phiên chroot để tải mã nguồn chuẩn từ kho Debian
-        sudo schroot -c chroot:trixie-amd64-sbuild --directory=/tmp -- /bin/bash << 'EOF' > output_env.tar
-        set -e
-        chmod 1777 /tmp
-        chown -R _apt:root /var/lib/apt/lists/
-        
-        # Kích hoạt kho deb-src bên trong chroot
-        sudo sed -i 's/^#\s*deb-src/deb-src/g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
-        
-        apt-get update >/dev/null
-        apt-get install -y devscripts dpkg-dev >/dev/null
-        
-        # Tạo thư mục làm việc nội bộ bên trong chroot
-        mkdir -p /tmp/debian-build-env && cd /tmp/debian-build-env
-        
-        # Tải trực tiếp mã nguồn sạch của chính gói bubblewrap từ kho Debian
-        apt-get source ${{ matrix.source }} >/dev/null
-        
-        # Xác định chính xác thư mục chứa mã nguồn bubblewrap vừa tải
         SRC_DIR=""
         for d in */; do
             if [ -f "${d}debian/changelog" ]; then
@@ -139,7 +97,7 @@ jobs:
         
         cd "$SRC_DIR"
 
-        # Thuật toán tự động tính toán mã phiên bản từ kho lưu trữ Debian
+        # Thuật toán tự động tính toán mã phiên bản kế thừa từ logic gốc của bạn
         dch_version() {
             local tag="${1:-v3}"
             local is_bp="${2:-0}"
@@ -150,21 +108,10 @@ jobs:
             local full_ver=""
             local apt_clean_opts=(-o "Dir::Etc::preferences=/dev/null" -o "Dir::Etc::preferencesparts=/dev/null" -o "Dir::Etc::sourceparts=/dev/null")
             local search_list="$src_name"
-            local upstream_bins=$(apt-cache "${apt_clean_opts[@]}" showsrc "$src_name" 2>/dev/null | grep -E "^Binary:" | sed 's/Binary://g' | tr ',' ' ')
-            [ -z "$upstream_bins" ] && [ -f "debian/control" ] && upstream_bins=$(awk '/^Package:/ {print $2}' debian/control)
-            search_list="$search_list $upstream_bins"
-            for bin in $search_list; do
-                if [ "$is_bp" -eq 1 ]; then
-                    full_ver=$(apt-cache "${apt_clean_opts[@]}" madison "$bin" 2>/dev/null | grep -E "backports|~bpo" | grep -v -E "file:|ct05" | head -n 1 | awk -F'|' '{print $2}' | tr -d ' ')
-                else
-                    full_ver=$(apt-cache "${apt_clean_opts[@]}" madison "$bin" 2>/dev/null | grep -v -E "file:|ct05" | head -n 1 | awk -F'|' '{print $2}' | tr -d ' ')
-                fi
-                if [ -n "$full_ver" ] && [ "$full_ver" != "(none)" ]; then
-                    if [[ "$full_ver" == *+b[0-9]* ]]; then break; fi
-                    if [ "$bin" = "$src_name" ]; then local saved_ver="$full_ver"; fi
-                fi
-            done
-            if [ -z "$full_ver" ] || [ "$full_ver" = "(none)" ]; then full_ver="${saved_ver:-$local_changelog_ver}"; fi
+            
+            # Giả định phiên bản trên kho trixie nếu không có cache madison
+            full_ver="$local_changelog_ver"
+            
             local epoch=""
             local main_ver="$full_ver"
             if [[ "$full_ver" == *:* ]]; then epoch="${full_ver%%:*}:"; main_ver="${full_ver#*:}"; fi
@@ -176,117 +123,66 @@ jobs:
         }
 
         DYNAMIC_VERSION=$(dch_version "${{ matrix.v }}" "${{ matrix.is_bp }}")
-        echo "🔥 Phiên bản tính toán từ kho Debian: $DYNAMIC_VERSION" >&2
+        echo "🔥 Phiên bản tính toán từ kho Debian: $DYNAMIC_VERSION"
         
-        # Cập nhật nhật ký phiên bản chính thức của gói bubblewrap
         export DEBEMAIL="cuongtran05@github.com"
         export DEBFULLNAME="Cường Trần"
-        dch --force-bad-version --v "$DYNAMIC_VERSION" "Automated Debian chroot rebuild for ${{ matrix.v }}." >/dev/null 2>&1
+        dch --force-bad-version --v "$DYNAMIC_VERSION" "Automated Debian unshare chroot rebuild for ${{ matrix.v }}."
         
-        # Quay trở lại thư mục cha và sinh lại tệp .dsc chính chủ được cập nhật số phiên bản mới
-        cd /tmp/debian-build-env
-        dpkg-source -b "$SRC_DIR" >/dev/null 2>&1
+        # Sinh tệp .dsc mới ngay trên máy host
+        dpkg-source -b "$SRC_DIR"
         
-        # Đóng gói toàn bộ kết quả xuất ra STDOUT
-        tar -cf - .
-        EOF
+        echo "📸 Kiểm tra các tệp tin nguồn đích thực tại workspace máy host:"
+        ls -la $GITHUB_WORKSPACE/debian-build-env/
 
-        # 2. Xử lý giải nén file tar thu được ngay trên máy host
-        tar -xf output_env.tar -C $GITHUB_WORKSPACE/
-        rm -f output_env.tar
+    - name: Build Package via sbuild (Unshare Native Mode)
+      env:
+        # 1. Các cờ cấu hình tối ưu hóa đồng bộ sang file config.pl
+        LTO: "${{ matrix.lto }}"
+        VERSION_TAG: "${{ matrix.v }}"
+        OPT_FLAG: "${{ matrix.flag }}"
+        DEB_BUILD_OPTIONS: "${{ matrix.DEB_BUILD_OPTIONS }}"
+        DEB_BUILD_PROFILES: "${{ matrix.DEB_BUILD_PROFILES }}"
+        SBUILD_TMPDIR: "/tmp"
         
-        # Cấp lại quyền sở hữu tệp tin cho user runner của GitHub Actions để sbuild có toàn quyền đọc
-        sudo chown -R runner:docker ./
-        echo "📸 Kiểm tra các tệp tin nguồn đích thực của gói bubblewrap tại máy host:"
-        ls -la
-
-    # Bước 7: Tiến hành sbuild biên dịch gói sạch sẽ
-    - name: Build Package via sbuild
+        # 2. 🌟 TRUYỀN BIẾN ĐỘNG CẤU HÌNH REPO TỪ JSON SANG CONFIG.PL
+        IS_BP: "${{ matrix.is_bp }}"
+        MATRIX_EXTRA_REPOS: "${{ join(matrix.extra_repos, ' ') }}"
+        MATRIX_CHROOT_SETUP: "${{ matrix.chroot_setup }}"
       run: |
-        # Thiết lập các cờ tối ưu hóa kiến trúc phần cứng (Compiler Flags) từ matrix
-        BASE_FLAGS="-march=${{ matrix.v == 'v4' && 'x86-64-v4' || 'x86-64-v3' }} -${{ matrix.flag }}"
-        if [ "${{ matrix.lto }}" -eq 1 ]; then
-          BASE_FLAGS="$BASE_FLAGS -flto=auto"
-        fi
-
-        # Xuất các biến môi trường trực tiếp ra máy host để sbuild tự động kế thừa vào chroot
-        export DEB_BUILD_OPTIONS="${{ matrix.DEB_BUILD_OPTIONS }}"
-        export DEB_BUILD_PROFILES="${{ matrix.DEB_BUILD_PROFILES }}"
-        export DEB_CFLAGS_APPEND="$BASE_FLAGS"
-        export DEB_CXXFLAGS_APPEND="$BASE_FLAGS"
-
-        # Cấu hình các hook hành động ổn định thông qua .sbuildrc của Perl theo chuẩn sbuild core
-        mkdir -p $HOME
-        cat << 'PERL' > $HOME/.sbuildrc
-        our $bindmounts = [ '/local-repo' ];
-        our $chroot_setup_commands = [
-            'printf "Package: *\nPin: origin \"\"\nPin-Priority: 1001\n" > /etc/apt/preferences.d/pin-glibc',
-            '/bin/bash ' . qx(pwd | tr -d '\n') . '/setup-chroot.sh'
-        ];
-        our $environment_filter = [
-            'PATH', 'DEB_BUILD_OPTIONS', 'DEB_BUILD_PROFILES', 
-            'DEB_CFLAGS_APPEND', 'DEB_CXXFLAGS_APPEND'
-        ];
-        1;
-        PERL
-
-        # Tạo một thư mục build độc lập và cấp quyền sở hữu hoàn toàn cho nhóm sbuild
-        sudo mkdir -p /tmp/sbuild-workspace
-        sudo cp bubblewrap_* /tmp/sbuild-workspace/
-        
-        # Cấp quyền đọc ghi tối đa cho hệ thống apt sandbox nội bộ (_apt)
-        sudo chmod -R 777 /tmp/sbuild-workspace
-        sudo chown -R runner:sbuild /tmp/sbuild-workspace
-
-        # Sử dụng Here-Doc << 'EOF' để thực thi lệnh sbuild bên trong thư mục cô lập
-        sg sbuild << 'EOF'
-        set -e
-        
-        # Di chuyển vào không gian làm việc an toàn đã cấu hình phân quyền đầy đủ
-        cd /tmp/sbuild-workspace
-        
-        # Tìm chính xác tệp .dsc chứa chuỗi danh tính ct05v theo đúng yêu cầu của bạn
-        DSC_FILE=$(ls *ct05v*.dsc | head -n 1)
+        cd $GITHUB_WORKSPACE/debian-build-env/
+        DSC_FILE=$(ls *.dsc | head -n 1)
         
         if [ -z "$DSC_FILE" ]; then
-            echo "❌ Không tìm thấy tệp .dsc tùy chỉnh chứa chuỗi ct05v!"
+            echo "❌ Không tìm thấy tệp .dsc!"
             exit 1
         fi
         
-        echo "🚀 Tiến hành biên dịch tệp nguồn sbuild tại không gian an toàn: /tmp/sbuild-workspace/$DSC_FILE"
-
-        # Lược bỏ hoàn toàn các cờ phân loại gói -b/-B/-A để sbuild tự vận hành cờ mặc định sạch sẽ
-        # Chỉ giữ lại duy nhất hai tùy chọn tắt ký số không gian nguồn
+        echo "🚀 Tiến hành biên dịch sbuild unshare với cơ chế nạp repo tự động..."
+        
+        # Thực thi sbuild. File config.pl sẽ tự động xử lý toàn bộ logic repo bên trong container ảo.
         sbuild -d trixie \
-          --chroot-mode=schroot \
+          --chroot-mode=unshare \
           --build-dep-resolver=apt \
+          --no-clean-source \
           --nolog \
           --debbuildopt="-us" \
           --debbuildopt="-uc" \
-          $DSC_FILE
-
-        # Đảm bảo copy toàn bộ thành phẩm từ thư mục tạm /tmp/sbuild-workspace về thẳng root workspace của Host
-        cp /tmp/sbuild-workspace/*.deb /tmp/sbuild-workspace/*.changes /tmp/sbuild-workspace/*.buildinfo $GITHUB_WORKSPACE/ 2>/dev/null || true
-        EOF
+          "$DSC_FILE"
 
     - name: Update Local Repository Index & Prepare Artifacts
       run: |
-        # 1. Khởi tạo cấu trúc thư mục lồng nhau lấy tên theo trường "name" từ ma trận JSON
-        # Thư mục đích thực tế: $GITHUB_WORKSPACE/dist-package/${{ matrix.name }}/
         TARGET_DIR="$GITHUB_WORKSPACE/dist-package/${{ matrix.name }}"
         mkdir -p "$TARGET_DIR"
         
-        # 2. Chỉ gom duy nhất các tệp .deb của gói vào thư mục riêng vừa tạo
-        cp $GITHUB_WORKSPACE/*.deb "$TARGET_DIR/" 2>/dev/null || true
+        # Gom các file deb thành phẩm từ thư mục build
+        cp $GITHUB_WORKSPACE/debian-build-env/*.deb "$TARGET_DIR/" 2>/dev/null || true
         
-        # 3. Đồng bộ các tệp .deb vào kho lưu trữ nội bộ hệ thống như cấu hình gốc ban đầu
-        sudo cp "$TARGET_DIR"/*.deb /local-repo/ 2>/dev/null || true
-        cd /local-repo
-        sudo dpkg-scanpackages . /dev/null > Packages
-        sudo gzip -fk Packages
-
-        # 4. Dọn dẹp sạch sẽ toàn bộ các file tạm (.deb, .changes, .buildinfo) ngoài root workspace để tránh lỗi trùng lặp sang job ma trận khác
-        rm -f $GITHUB_WORKSPACE/*.deb $GITHUB_WORKSPACE/*.changes $GITHUB_WORKSPACE/*.buildinfo 2>/dev/null || true
+        # Cập nhật ngược lại vào kho nội bộ máy host phòng trường hợp các job sau cần phụ thuộc
+        cp "$TARGET_DIR"/*.deb $HOME/local-repo/ 2>/dev/null || true
+        cd $HOME/local-repo
+        dpkg-scanpackages . /dev/null > Packages
+        gzip -fk Packages
 
     - name: Upload Artifacts to GitHub Actions UX
       uses: actions/upload-artifact@v4
