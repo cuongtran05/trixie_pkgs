@@ -70,7 +70,7 @@ jobs:
       run: |
         mkdir -p $HOME/.config/sbuild
         
-        # 1. Thiết lập cấu hình sbuild unshare nền tảng cơ bản
+        # 1. Khởi tạo cấu hình sbuild unshare nền tảng cơ bản
         cat << 'EOF' > $HOME/.config/sbuild/config.pl
         $chroot_mode = 'unshare';
         $build_dep_resolver = 'apt';
@@ -79,7 +79,7 @@ jobs:
         our $bindmounts = [ "$ENV{HOME}/local-repo:/local-repo" ];
         EOF
 
-        # 2. Giải mã các tham số ma trận JSON ngay trên máy Host
+        # 2. Phân tích giá trị tĩnh từ ma trận JSON để tính toán chuỗi cờ tối ưu hóa
         my_lto="${{ matrix.lto }}"
         my_v="${{ matrix.v }}"
         my_flag="${{ matrix.flag }}"
@@ -87,51 +87,41 @@ jobs:
         if [ "$my_v" = "v3" ]; then
             march_flag="-march=x86-64-v3 -mtune=tigerlake -msha -maes -mpclmul -mrdrnd -mrdseed -mfsgsbase -mfxsr -mxsave -mxsaveopt -mxsavec -mxsaves -mclflushopt -mclwb -mshstk -mvaes -mvpclmulqdq -mgfni -mno-avx512f -mno-avx512vl -mno-avx512bw -mno-avx512dq -mno-avx512cd -mno-avx512ifma -mno-avx512vbmi -mno-avx512vbmi2 -mno-avx512vnni -mno-avx512bitalg -mno-avx512vpopcntdq -mno-avx512vp2intersect -mprefer-vector-width=256"
             rust_flags="-C target-cpu=x86-64-v3 -C llvm-args=-mcpu=tigerlake -C target-feature=+aes,+pclmulqdq,+rdrand,+rdseed,+fsgsbase,+fxsr,+xsave,+xsaveopt,+xsavec,+xsaves,+clflushopt,+clwb,+shstk,+vaes,+vpclmulqdq,+gfni,-avx512f,-avx512vl,-avx512bw,-avx512dq,-avx512cd,-avx512ifma,-avx512vbmi,-avx512vbmi2,-avx512vnni,-avx512bitalg,-avx512vpopcntdq,-avx512vp2intersect"
-        elif [ "$my_v" = "v4" ]; then
-            march_flag="-march=native -mprefer-vector-width=512"
-            rust_flags="-C target-cpu=native"
         else
-            march_flag="-march=x86-64-$my_v -mtune=tigerlake"
-            rust_flags="-C target-cpu=x86-64-$my_v -C llvm-args=-mcpu=tigerlake"
+            march_flag="-march=x86-64-$my_v"
+            rust_flags="-C target-cpu=x86-64-$my_v"
         fi
 
+        # Biên dịch chính xác cờ LTO kết hợp cờ -O3 từ file cấu hình của bạn
         if [ "$my_lto" = "1" ]; then
-            opt_flags="-$my_flag $march_flag -flto=auto -fuse-linker-plugin"
+            opt_flags="-${my_flag} ${march_flag} -flto=auto -fuse-linker-plugin"
             ld_flags="-Wl,-O1 -Wl,--as-needed -flto=auto"
-            rust_flags="$rust_flags -C linker-plugin-lto"
             deb_maint_options="optimize=+lto"
         else
-            opt_flags="-$my_flag $march_flag"
+            opt_flags="-${my_flag} ${march_flag}"
             ld_flags="-Wl,-O1 -Wl,--as-needed"
             deb_maint_options="optimize=-lto"
         fi
 
-        # 3. 🌟 PHƯƠNG PHÁP FIX CHUẨN: Sử dụng cặp biến đặc quyền của Maintainer lồng ghép thẳng vào bộ lọc
-        # Cấu hình này bảo toàn cờ hệ thống để tránh crash, đồng thời ép cờ tối ưu vào đuôi lệnh
+        # 3. TIÊM ĐỒNG THỜI BIẾN BIÊN DỊCH TRẦN VÀ BIẾN DUY TRÌ VÀO SBUILD
+        # Việc khai báo CFLAGS trần buộc Meson phải nạp chuỗi này thay cho cấu hình mặc định hệ thống
         cat << EOF >> $HOME/.config/sbuild/config.pl
         \$build_environment = {
-            'CFLAGS'                  => '$opt_flags',
-            'CXXFLAGS'                => '$opt_flags',
-            'LDFLAGS'                 => '$ld_flags',
-            'DEB_CFLAGS_MAINT_APPEND' => '$opt_flags',
+            'CFLAGS'                    => '$opt_flags',
+            'CXXFLAGS'                  => '$opt_flags',
+            'LDFLAGS'                   => '$ld_flags',
+            'DEB_CFLAGS_MAINT_APPEND'   => '$opt_flags',
             'DEB_CXXFLAGS_MAINT_APPEND' => '$opt_flags',
-            'DEB_LDFLAGS_MAINT_APPEND' => '$ld_flags',
-            'RUSTFLAGS'               => '$rust_flags', 
-            'DEB_BUILD_MAINT_OPTIONS' => '$deb_maint_options',
-            'CMAKE_CXX_SCAN_FOR_MODULES' => "OFF",
+            'DEB_LDFLAGS_MAINT_APPEND'  => '$ld_flags',
+            'RUSTFLAGS'                 => '$rust_flags', 
+            'DEB_BUILD_MAINT_OPTIONS'   => '$deb_maint_options',
+            'CMAKE_CXX_SCAN_FOR_MODULES' => 'OFF',
+            'DEB_BUILD_OPTIONS'         => '${{ matrix.DEB_BUILD_OPTIONS }}',
+            'DEB_BUILD_PROFILES'        => '${{ matrix.DEB_BUILD_PROFILES }}',
         };
         EOF
 
-        # Tích hợp DEB_BUILD_OPTIONS từ ma trận JSON
-        BASE_BUILD_OPTS="${{ matrix.DEB_BUILD_OPTIONS }}"
-        if [ -n "$BASE_BUILD_OPTS" ]; then
-            echo "\$build_environment->{'DEB_BUILD_OPTIONS'} = '$BASE_BUILD_OPTS';" >> $HOME/.config/sbuild/config.pl
-        fi
-        if [ -n "${{ matrix.DEB_BUILD_PROFILES }}" ]; then
-            echo "\$build_environment->{'DEB_BUILD_PROFILES'} = '"${{ matrix.DEB_BUILD_PROFILES }}"';" >> $HOME/.config/sbuild/config.pl
-        fi
-
-        # 4. Thiết lập danh mục Repo chuẩn cho Chroot qua Hook tĩnh
+        # 4. Sinh cấu hình Hook thiết lập danh mục kho lưu trữ và chính sách Pin từ JSON
         cat << 'EOF' >> $HOME/.config/sbuild/config.pl
         our $chroot_setup_commands = [
             'printf "Package: *\nPin: origin \"\"\nPin-Priority: 1001\n" > /etc/apt/preferences.d/pin-glibc',
@@ -140,7 +130,7 @@ jobs:
             'echo "deb http://deb.debian.org/debian-security trixie-security main non-free-firmware contrib non-free" >> /etc/apt/sources.list.d/trixie.list',
             'echo "deb-src http://deb.debian.org/debian-security trixie-security main non-free-firmware contrib non-free" >> /etc/apt/sources.list.d/trixie.list',
         EOF
-
+        
         if [ "${{ matrix.is_bp }}" = "1" ]; then
             cat << 'EOF' >> $HOME/.config/sbuild/config.pl
             'echo "deb http://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/bp-sources.list',
@@ -148,6 +138,7 @@ jobs:
         EOF
         fi
 
+        # Xử lý chèn danh sách repo bổ sung từ ma trận JSON
         EXTRA_REPOS_JOINED="${{ join(matrix.extra_repos, ' ') }}"
         if [ -n "$EXTRA_REPOS_JOINED" ]; then
             echo "            'echo \"$EXTRA_REPOS_JOINED\" > /etc/apt/sources.list.d/local-repo.list'," >> $HOME/.config/sbuild/config.pl
@@ -155,6 +146,7 @@ jobs:
             echo "            'echo \"deb [trusted=yes] file:///local-repo ./\" > /etc/apt/sources.list.d/local-repo.list'," >> $HOME/.config/sbuild/config.pl
         fi
 
+        # Khởi chạy chuỗi lệnh setup mở rộng (Đã giải mã chính xác chuỗi Pin LocalRepo của bạn)
         CHROOT_SETUP_CMD="${{ matrix.chroot_setup }}"
         if [ -n "$CHROOT_SETUP_CMD" ]; then
             CHROOT_SETUP_CMD_ESCAPED=$(echo "$CHROOT_SETUP_CMD" | sed "s/'/\\\\'/g")
@@ -166,7 +158,7 @@ jobs:
         echo "];" >> $HOME/.config/sbuild/config.pl
         echo "1;" >> $HOME/.config/sbuild/config.pl
 
-        echo "📸 KIỂM TRA FILE CẤU HÌNH SBUILD KHÔNG CÒN CỜ SET GÂY CRASH:"
+        echo "📸 KIỂM TRA FILE CẤU HÌNH SBUILD KHỚP HOÀN TOÀN JSON:"
         cat $HOME/.config/sbuild/config.pl
 
     - name: Download Source and Dynamic Versioning via Host/Apt
@@ -271,6 +263,7 @@ jobs:
           --nolog \
           --debbuildopt="-us" \
           --debbuildopt="-uc" \
+          --debbuildopt="--build-profiles=${{ matrix.DEB_BUILD_PROFILES }}" \
           "$DSC_FILE"
 
     - name: Update Local Repository Index & Prepare Artifacts
