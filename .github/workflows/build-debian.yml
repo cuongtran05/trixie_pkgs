@@ -79,8 +79,11 @@ jobs:
     - name: Download Source and Dynamic Versioning via Host/Apt
       run: |
         # 1. Khai báo kho lưu trữ tạm thời với cờ [trusted=yes] để bỏ qua bước kiểm tra khóa trên Host Ubuntu
-        sudo sh -c 'echo "deb-src [trusted=yes] http://debian.org trixie main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/trixie-src.list'
-        
+        sudo sh -c 'echo "deb [trusted=yes] http://deb.debian.org/debian trixie main non-free-firmware contrib non-free" > /etc/apt/sources.list.d/trixie.list'
+        sudo sh -c 'echo "deb-src [trusted=yes] http://deb.debian.org/debian trixie main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/trixie.list'
+        sudo sh -c 'echo "deb [trusted=yes] http://deb.debian.org/debian trixie-security main non-free-firmware contrib non-free" >> /etc/apt/sources.list.d/trixie.list'
+        sudo sh -c 'echo "deb-src [trusted=yes] http://deb.debian.org/debian trixie-security main non-free-firmware contrib non-free" >> /etc/apt/sources.list.d/trixie.list'
+
         # 2. Cập nhật lại cơ sở dữ liệu apt để nhận diện cấu trúc tệp nguồn mới
         sudo apt-get update
         
