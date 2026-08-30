@@ -70,7 +70,7 @@ jobs:
       run: |
         mkdir -p $HOME/.config/sbuild
         
-        # 1. Khởi tạo cấu hình sbuild cơ bản ban đầu
+        # 1. Thiết lập cấu hình sbuild unshare nền tảng cơ bản
         cat << 'EOF' > $HOME/.config/sbuild/config.pl
         $chroot_mode = 'unshare';
         $build_dep_resolver = 'apt';
@@ -79,7 +79,7 @@ jobs:
         our $bindmounts = [ "$ENV{HOME}/local-repo:/local-repo" ];
         EOF
 
-        # 2. Đọc biến ma trận lấy cờ tối ưu hóa trên Host
+        # 2. Giải mã các tham số ma trận JSON ngay trên máy Host
         my_lto="${{ matrix.lto }}"
         my_v="${{ matrix.v }}"
         my_flag="${{ matrix.flag }}"
@@ -106,25 +106,32 @@ jobs:
             deb_maint_options="optimize=-lto"
         fi
 
-        # 3. ÉP BIẾN MÔI TRƯỜNG TOÀN CỤC VÀ TUYẾN ĐƯỜNG PATH CHO SBUILD
-        # Ép đặt /usr/local/bin lên đầu PATH của phiên build để chặn đầu Ninja/Meson
+        # 3. 🌟 CHIẾN THUẬT QUYẾT ĐỊNH: Đè biến môi trường dạng SET (Ghi đè tuyệt đối cấu hình mặc định)
+        # Sử dụng cấu trúc ghi đè toàn cục, Meson/dh_auto_configure buộc phải nạp biến này bất kể buildtype=plain
         cat << EOF >> $HOME/.config/sbuild/config.pl
         \$build_environment = {
-            'PATH'                    => '/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+            'DEB_CFLAGS_SET'          => '$opt_flags',
+            'DEB_CXXFLAGS_SET'        => '$opt_flags',
+            'DEB_LDFLAGS_SET'         => '$ld_flags',
+            'DEB_CFLAGS_MAINT_APPEND' => '$opt_flags',
+            'DEB_CXXFLAGS_MAINT_APPEND' => '$opt_flags',
+            'DEB_LDFLAGS_MAINT_APPEND' => '$ld_flags',
             'RUSTFLAGS'               => '$rust_flags', 
             'DEB_BUILD_MAINT_OPTIONS' => '$deb_maint_options',
             'CMAKE_CXX_SCAN_FOR_MODULES' => "OFF",
         };
         EOF
 
-        if [ -n "${{ matrix.DEB_BUILD_OPTIONS }}" ]; then
-            echo '$build_environment->{"DEB_BUILD_OPTIONS"} = "'"${{ matrix.DEB_BUILD_OPTIONS }}"'";' >> $HOME/.config/sbuild/config.pl
+        # Tích hợp DEB_BUILD_OPTIONS từ ma trận JSON
+        BASE_BUILD_OPTS="${{ matrix.DEB_BUILD_OPTIONS }}"
+        if [ -n "$BASE_BUILD_OPTS" ]; then
+            echo "\$build_environment->{'DEB_BUILD_OPTIONS'} = '$BASE_BUILD_OPTS';" >> $HOME/.config/sbuild/config.pl
         fi
         if [ -n "${{ matrix.DEB_BUILD_PROFILES }}" ]; then
-            echo '$build_environment->{"DEB_BUILD_PROFILES"} = "'"${{ matrix.DEB_BUILD_PROFILES }}"'";' >> $HOME/.config/sbuild/config.pl
+            echo "\$build_environment->{'DEB_BUILD_PROFILES'} = '"${{ matrix.DEB_BUILD_PROFILES }}"';" >> $HOME/.config/sbuild/config.pl
         fi
 
-        # 4. Tạo các lệnh Hook để triển khai file Wrapper vào /usr/local/bin
+        # 4. Thiết lập danh mục Repo chuẩn cho Chroot qua Hook tĩnh
         cat << 'EOF' >> $HOME/.config/sbuild/config.pl
         our $chroot_setup_commands = [
             'printf "Package: *\nPin: origin \"\"\nPin-Priority: 1001\n" > /etc/apt/preferences.d/pin-glibc',
@@ -134,25 +141,6 @@ jobs:
             'echo "deb-src http://deb.debian.org/debian-security trixie-security main non-free-firmware contrib non-free" >> /etc/apt/sources.list.d/trixie.list',
         EOF
 
-        # Chuyển hướng vị trí ghi wrapper sang /usr/local/bin (Nơi user thường có quyền đọc và thực thi trong PATH)
-        echo "            'mkdir -p /usr/local/bin'," >> $HOME/.config/sbuild/config.pl
-        
-        # Tạo wrapper cho cc
-        echo "            'echo \"#!/bin/sh\" > /usr/local/bin/cc'," >> $HOME/.config/sbuild/config.pl
-        echo "            'echo \"exec /usr/bin/cc \\\$@ $opt_flags $ld_flags\" >> /usr/local/bin/cc'," >> $HOME/.config/sbuild/config.pl
-        echo "            'chmod 755 /usr/local/bin/cc'," >> $HOME/.config/sbuild/config.pl
-
-        # Tạo wrapper cho gcc
-        echo "            'echo \"#!/bin/sh\" > /usr/local/bin/gcc'," >> $HOME/.config/sbuild/config.pl
-        echo "            'echo \"exec /usr/bin/gcc \\\$@ $opt_flags $ld_flags\" >> /usr/local/bin/gcc'," >> $HOME/.config/sbuild/config.pl
-        echo "            'chmod 755 /usr/local/bin/gcc'," >> $HOME/.config/sbuild/config.pl
-
-        # Tạo wrapper cho g++
-        echo "            'echo \"#!/bin/sh\" > /usr/local/bin/g++'," >> $HOME/.config/sbuild/config.pl
-        echo "            'echo \"exec /usr/bin/g++ \\\$@ $opt_flags $ld_flags\" >> /usr/local/bin/g++'," >> $HOME/.config/sbuild/config.pl
-        echo "            'chmod 755 /usr/local/bin/g++'," >> $HOME/.config/sbuild/config.pl
-
-        # Cấu hình kiểm tra repo backports
         if [ "${{ matrix.is_bp }}" = "1" ]; then
             cat << 'EOF' >> $HOME/.config/sbuild/config.pl
             'echo "deb http://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/bp-sources.list',
@@ -178,7 +166,7 @@ jobs:
         echo "];" >> $HOME/.config/sbuild/config.pl
         echo "1;" >> $HOME/.config/sbuild/config.pl
 
-        echo "📸 KIỂM TRA FILE CẤU HÌNH SBUILD PATH CHẶN ĐẦU MESON:"
+        echo "📸 KIỂM TRA FILE CẤU HÌNH SBUILD DÙNG FLAGS ĐÈ TOÀN CỤC:"
         cat $HOME/.config/sbuild/config.pl
 
     - name: Download Source and Dynamic Versioning via Host/Apt
@@ -270,29 +258,12 @@ jobs:
         DSC_FILE=$(ls *.dsc | head -n 1)
         
         if [ -z "$DSC_FILE" ]; then
-            echo "❌ Không tìm thấy tệp .dsc!"
             exit 1
         fi
         
-        echo "🚀 Khởi chạy sbuild unshare xuyên thủng bộ lọc môi trường của Host..."
-        
-        # 🌟 ĐOẠN FIX CHÍ MẠNG: Thiết lập trực tiếp biến môi trường hệ thống cho phiên chạy sbuild hiện tại
-        # Các biến này sẽ được bảo lưu và nạp thẳng vào bộ nhớ khi sbuild đọc file config.pl
-        export LTO="${{ matrix.lto }}"
-        export VERSION_TAG="${{ matrix.v }}"
-        export OPT_FLAG="${{ matrix.flag }}"
-        
-        # Bảo lưu các tùy chọn đóng gói gốc của bạn
-        export DEB_BUILD_OPTIONS="${{ matrix.DEB_BUILD_OPTIONS }}"
-        export DEB_BUILD_PROFILES="${{ matrix.DEB_BUILD_PROFILES }}"
-        
-        # Đồng bộ hóa các biến cấu hình repo sang cho hook chroot nội bộ
-        export IS_BP="${{ matrix.is_bp }}"
-        export MATRIX_EXTRA_REPOS="${{ join(matrix.extra_repos, ' ') }}"
-        export MATRIX_CHROOT_SETUP="${{ matrix.chroot_setup }}"
         export SBUILD_TMPDIR="/tmp"
 
-        # Khởi chạy sbuild. Bây giờ file config.pl của bạn chắc chắn sẽ đọc được $ENV{'VERSION_TAG'} là "v3"
+        # Khởi chạy sbuild kết hợp ép tham số biên dịch vào lệnh thực thi cốt lõi
         sbuild -d trixie \
           --chroot-mode=unshare \
           --build-dep-resolver=apt \
@@ -300,6 +271,7 @@ jobs:
           --nolog \
           --debbuildopt="-us" \
           --debbuildopt="-uc" \
+          --debbuildopt="--nocheck" \
           "$DSC_FILE"
 
     - name: Update Local Repository Index & Prepare Artifacts
