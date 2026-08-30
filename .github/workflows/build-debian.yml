@@ -271,7 +271,6 @@ jobs:
           --nolog \
           --debbuildopt="-us" \
           --debbuildopt="-uc" \
-          --debbuildopt="--nocheck" \
           "$DSC_FILE"
 
     - name: Update Local Repository Index & Prepare Artifacts
