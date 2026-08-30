@@ -76,6 +76,12 @@ jobs:
         echo "📸 Kiểm tra tệp cấu hình sbuild cuối cùng để đảm bảo tính an toàn:"
         cat $HOME/.config/sbuild/config.pl
 
+    - name: Create Base sbuild Chroot Tarball via mmdebstrap
+      run: |
+        mkdir -p $HOME/.cache/sbuild
+        echo "🚀 Đang dựng hệ thống nền trixie-amd64.tar bằng mmdebstrap..."
+        mmdebstrap --variant=buildd trixie $HOME/.cache/sbuild/trixie-amd64.tar http://deb.debian.org/debian
+
     - name: Download Source and Dynamic Versioning via Host/Apt
       run: |
         # 1. Khai báo kho chính và kho bảo mật chuẩn chỉnh của Trixie với cờ [trusted=yes]
@@ -183,9 +189,7 @@ jobs:
         fi
         
         echo "🚀 Kích hoạt sbuild unshare và tự động dựng chroot tạm thời qua mmdebstrap..."
-        
-        # Giải pháp: Ép sbuild tạo chroot on-the-fly bằng cách gộp URL kho lưu trữ vào cờ -d
-        sbuild -d trixie-http://deb.debian.org/debian \
+        sbuild -d trixie \
           --chroot-mode=unshare \
           --build-dep-resolver=apt \
           --no-clean-source \
