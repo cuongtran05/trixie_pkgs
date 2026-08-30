@@ -182,11 +182,12 @@ jobs:
             exit 1
         fi
         
-        echo "🚀 Tiến hành biên dịch sbuild unshare sạch (Cấu hình builder nạp qua config.pl)..."
+        echo "🚀 Tiến hành kích hoạt sbuild unshare và ép mmdebstrap tự tạo chroot tức thì..."
         
-        # Lược bỏ cờ lỗi --chroot-builder bên ngoài CLI. Sbuild sẽ tự đọc nó trong file config.pl
+        # Sửa lỗi chí mạng: Thêm tham số --chroot-url để ép sbuild tự động tải base system về tạo chroot mới
         sbuild -d trixie \
           --chroot-mode=unshare \
+          --chroot-url=http://deb.debian.org/debian \
           --build-dep-resolver=apt \
           --no-clean-source \
           --nolog \
