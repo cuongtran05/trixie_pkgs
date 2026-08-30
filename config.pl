@@ -71,15 +71,15 @@ our $chroot_setup_commands = [
     'printf "Package: *\nPin: origin \"\"\nPin-Priority: 1001\n" > /etc/apt/preferences.d/pin-glibc',
     
     # Khởi tạo danh sách repo nền cho Debian Trixie (Đảm bảo đầy đủ components)
-    'echo "deb http://debian.org trixie main non-free-firmware contrib non-free" > /etc/apt/sources.list.d/trixie.list',
-    'echo "deb-src http://debian.org trixie main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/trixie.list',
-    'echo "deb http://debian.org trixie-security main non-free-firmware contrib non-free" >> /etc/apt/sources.list.d/trixie.list',
-    'echo "deb-src http://debian.org trixie-security main non-free-firmware contrib non-free" >> /etc/apt/sources.list.d/trixie.list',
+    'echo "deb http://deb.debian.org/debian trixie main non-free-firmware contrib non-free" > /etc/apt/sources.list.d/trixie.list',
+    'echo "deb-src http://deb.debian.org/debian trixie main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/trixie.list',
+    'echo "deb http://deb.debian.org/debian trixie-security main non-free-firmware contrib non-free" >> /etc/apt/sources.list.d/trixie.list',
+    'echo "deb-src http://deb.debian.org/debian trixie-security main non-free-firmware contrib non-free" >> /etc/apt/sources.list.d/trixie.list',
     
     # Kiểm tra biến môi trường để nạp repo Backports từ ma trận JSON
     $ENV{'IS_BP'} eq "1" ? (
-        'echo "deb http://debian.org trixie-backports main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/bp-sources.list',
-        'echo "deb-src http://debian.org trixie-backports main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/bp-sources.list'
+        'echo "deb http://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/bp-sources.list',
+        'echo "deb-src http://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/bp-sources.list'
     ) : (),
 
     # Kiểm tra và nạp danh sách các repo phụ (extra_repos) hoặc trỏ về kho local-repo mặc định

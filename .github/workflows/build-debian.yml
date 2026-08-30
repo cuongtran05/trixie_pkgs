@@ -79,7 +79,7 @@ jobs:
     - name: Download Source and Dynamic Versioning via Host/Apt
       run: |
         # 1. Thêm trực tiếp kho lưu trữ mã nguồn deb-src của Debian Trixie vào máy host Ubuntu
-        sudo sh -c 'echo "deb-src http://debian.org trixie main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/trixie-src.list'
+        sudo sh -c 'echo "deb-src http://deb.debian.org/debian trixie main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/trixie-src.list'
         
         # 2. Cập nhật cơ sở dữ liệu apt của máy host để ghi nhận kho lưu trữ mới
         sudo apt-get update
