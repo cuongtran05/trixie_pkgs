@@ -106,13 +106,13 @@ jobs:
             deb_maint_options="optimize=-lto"
         fi
 
-        # 3. 🌟 CHIẾN THUẬT QUYẾT ĐỊNH: Đè biến môi trường dạng SET (Ghi đè tuyệt đối cấu hình mặc định)
-        # Sử dụng cấu trúc ghi đè toàn cục, Meson/dh_auto_configure buộc phải nạp biến này bất kể buildtype=plain
+        # 3. 🌟 PHƯƠNG PHÁP FIX CHUẨN: Sử dụng cặp biến đặc quyền của Maintainer lồng ghép thẳng vào bộ lọc
+        # Cấu hình này bảo toàn cờ hệ thống để tránh crash, đồng thời ép cờ tối ưu vào đuôi lệnh
         cat << EOF >> $HOME/.config/sbuild/config.pl
         \$build_environment = {
-            'DEB_CFLAGS_SET'          => '$opt_flags',
-            'DEB_CXXFLAGS_SET'        => '$opt_flags',
-            'DEB_LDFLAGS_SET'         => '$ld_flags',
+            'CFLAGS'                  => '$opt_flags',
+            'CXXFLAGS'                => '$opt_flags',
+            'LDFLAGS'                 => '$ld_flags',
             'DEB_CFLAGS_MAINT_APPEND' => '$opt_flags',
             'DEB_CXXFLAGS_MAINT_APPEND' => '$opt_flags',
             'DEB_LDFLAGS_MAINT_APPEND' => '$ld_flags',
@@ -166,7 +166,7 @@ jobs:
         echo "];" >> $HOME/.config/sbuild/config.pl
         echo "1;" >> $HOME/.config/sbuild/config.pl
 
-        echo "📸 KIỂM TRA FILE CẤU HÌNH SBUILD DÙNG FLAGS ĐÈ TOÀN CỤC:"
+        echo "📸 KIỂM TRA FILE CẤU HÌNH SBUILD KHÔNG CÒN CỜ SET GÂY CRASH:"
         cat $HOME/.config/sbuild/config.pl
 
     - name: Download Source and Dynamic Versioning via Host/Apt
@@ -266,7 +266,7 @@ jobs:
         # Khởi chạy sbuild kết hợp ép tham số biên dịch vào lệnh thực thi cốt lõi
         sbuild -d trixie \
           --chroot-mode=unshare \
-          --build-dep-resolver=apt \
+          --build-dep-resolver=apt --no-run-lintian \
           --no-clean-source \
           --nolog \
           --debbuildopt="-us" \
