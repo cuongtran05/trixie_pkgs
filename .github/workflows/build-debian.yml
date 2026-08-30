@@ -166,19 +166,6 @@ jobs:
         ls -la $GITHUB_WORKSPACE/debian-build-env/
 
     - name: Build Package via sbuild (Unshare Native Mode)
-      env:
-        # 1. Các cờ cấu hình tối ưu hóa đồng bộ sang file config.pl
-        LTO: "${{ matrix.lto }}"
-        VERSION_TAG: "${{ matrix.v }}"
-        OPT_FLAG: "${{ matrix.flag }}"
-        DEB_BUILD_OPTIONS: "${{ matrix.DEB_BUILD_OPTIONS }}"
-        DEB_BUILD_PROFILES: "${{ matrix.DEB_BUILD_PROFILES }}"
-        SBUILD_TMPDIR: "/tmp"
-        
-        # 2. Truyền biến động cấu hình repo từ JSON sang file config.pl
-        IS_BP: "${{ matrix.is_bp }}"
-        MATRIX_EXTRA_REPOS: "${{ join(matrix.extra_repos, ' ') }}"
-        MATRIX_CHROOT_SETUP: "${{ matrix.chroot_setup }}"
       run: |
         cd $GITHUB_WORKSPACE/debian-build-env/
         DSC_FILE=$(ls *.dsc | head -n 1)
@@ -188,7 +175,25 @@ jobs:
             exit 1
         fi
         
-        echo "🚀 Kích hoạt sbuild unshare và tự động dựng chroot tạm thời qua mmdebstrap..."
+        echo "🚀 Khởi chạy sbuild unshare xuyên thủng bộ lọc môi trường của Host..."
+        
+        # 🌟 ĐOẠN FIX CHÍ MẠNG: Thiết lập trực tiếp biến môi trường hệ thống cho phiên chạy sbuild hiện tại
+        # Các biến này sẽ được bảo lưu và nạp thẳng vào bộ nhớ khi sbuild đọc file config.pl
+        export LTO="${{ matrix.lto }}"
+        export VERSION_TAG="${{ matrix.v }}"
+        export OPT_FLAG="${{ matrix.flag }}"
+        
+        # Bảo lưu các tùy chọn đóng gói gốc của bạn
+        export DEB_BUILD_OPTIONS="${{ matrix.DEB_BUILD_OPTIONS }}"
+        export DEB_BUILD_PROFILES="${{ matrix.DEB_BUILD_PROFILES }}"
+        
+        # Đồng bộ hóa các biến cấu hình repo sang cho hook chroot nội bộ
+        export IS_BP="${{ matrix.is_bp }}"
+        export MATRIX_EXTRA_REPOS="${{ join(matrix.extra_repos, ' ') }}"
+        export MATRIX_CHROOT_SETUP="${{ matrix.chroot_setup }}"
+        export SBUILD_TMPDIR="/tmp"
+
+        # Khởi chạy sbuild. Bây giờ file config.pl của bạn chắc chắn sẽ đọc được $ENV{'VERSION_TAG'} là "v3"
         sbuild -d trixie \
           --chroot-mode=unshare \
           --build-dep-resolver=apt \
