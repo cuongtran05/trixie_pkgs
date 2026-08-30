@@ -5,7 +5,7 @@
         "is_bp": 0,
         "v": "v3",
         "lto": 1,
-        "flag": "O2",
+        "flag": "O3",
         "DEB_CFLAGS_APPEND": "",
         "DEB_BUILD_OPTIONS": "parallel=6 nocheck nodoc noautodbgsym",
         "DEB_BUILD_PROFILES": "nodoc nocheck",

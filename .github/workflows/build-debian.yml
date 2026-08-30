@@ -69,68 +69,63 @@ jobs:
     - name: Deploy Custom config.pl & Inject Dynamic Environment
       run: |
         mkdir -p $HOME/.config/sbuild
+        mkdir -p $HOME/debian-dpkg-config
         
-        # 1. Khởi tạo phần cấu hình cơ bản cho sbuild
+        # 1. Khởi tạo cấu hình sbuild cơ bản ban đầu
         cat << 'EOF' > $HOME/.config/sbuild/config.pl
         $chroot_mode = 'unshare';
         $build_dep_resolver = 'apt';
         $unshare_mmdebstrap_auto_create = 1; 
         $unshare_mmdebstrap_keep_tarball = 1;
-        our $bindmounts = [ "$ENV{HOME}/local-repo:/local-repo" ];
         EOF
 
-        # 2. Biên dịch cứng các tham số từ ma trận JSON thành biến Perl tĩnh
-        # Điều này giúp loại bỏ hoàn toàn sự phụ thuộc vào biến môi trường export của Host
+        # 2. Sinh biến Perl từ ma trận JSON để tính toán cờ tối ưu trên Host
+        my_lto="${{ matrix.lto }}"
+        my_v="${{ matrix.v }}"
+        my_flag="${{ matrix.flag }}"
+        
+        # Thiết lập cờ kiến trúc phần cứng chip
+        if [ "$my_v" = "v3" ]; then
+            march_flag="-march=x86-64-v3 -mtune=tigerlake -msha -maes -mpclmul -mrdrnd -mrdseed -mfsgsbase -mfxsr -mxsave -mxsaveopt -mxsavec -mxsaves -mclflushopt -mclwb -mshstk -mvaes -mvpclmulqdq -mgfni -mno-avx512f -mno-avx512vl -mno-avx512bw -mno-avx512dq -mno-avx512cd -mno-avx512ifma -mno-avx512vbmi -mno-avx512vbmi2 -mno-avx512vnni -mno-avx512bitalg -mno-avx512vpopcntdq -mno-avx512vp2intersect -mprefer-vector-width=256"
+            rust_flags="-C target-cpu=x86-64-v3 -C llvm-args=-mcpu=tigerlake -C target-feature=+aes,+pclmulqdq,+rdrand,+rdseed,+fsgsbase,+fxsr,+xsave,+xsaveopt,+xsavec,+xsaves,+clflushopt,+clwb,+shstk,+vaes,+vpclmulqdq,+gfni,-avx512f,-avx512vl,-avx512bw,-avx512dq,-avx512cd,-avx512ifma,-avx512vbmi,-avx512vbmi2,-avx512vnni,-avx512bitalg,-avx512vpopcntdq,-avx512vp2intersect"
+        elif [ "$my_v" = "v4" ]; then
+            march_flag="-march=native -mprefer-vector-width=512"
+            rust_flags="-C target-cpu=native"
+        else
+            march_flag="-march=x86-64-$my_v -mtune=tigerlake"
+            rust_flags="-C target-cpu=x86-64-$my_v -C llvm-args=-mcpu=tigerlake"
+        fi
+
+        # Thiết lập cấu hình LTO và tối ưu hóa tối đa cờ liên kết
+        if [ "$my_lto" = "1" ]; then
+            opt_flags="-$my_flag $march_flag -flto=auto -fuse-linker-plugin"
+            ld_flags="-Wl,-O1 -Wl,--as-needed -flto=auto"
+            rust_flags="$rust_flags -C linker-plugin-lto"
+            deb_maint_options="optimize=+lto"
+        else
+            opt_flags="-$my_flag $march_flag"
+            ld_flags="-Wl,-O1 -Wl,--as-needed"
+            deb_maint_options="optimize=-lto"
+        fi
+
+        # 3. 🌟 PHƯƠNG PHÁP FIX CHÍ MẠNG: Khởi tạo file buildflags.conf để ép cấu hình hệ thống dpkg
+        # File này sẽ đè trực tiếp lên toàn bộ cấu trúc biên dịch của Apt/Meson/Make
+        cat << EOF > $HOME/debian-dpkg-config/buildflags.conf
+        APPEND CFLAGS $opt_flags
+        APPEND CXXFLAGS $opt_flags
+        APPEND LDFLAGS $ld_flags
+        EOF
+
+        # 4. Ghi đè bộ biến môi trường bắt buộc vào config.pl của sbuild để bảo lưu cờ Rust và Maint
         cat << EOF >> $HOME/.config/sbuild/config.pl
-        my \$use_lto     = "${{ matrix.lto }}";
-        my \$version_tag = "${{ matrix.v }}"; 
-        my \$base_flag   = "${{ matrix.flag }}"; 
-        EOF
-
-        # 3. Nối tiếp phần xử lý logic cờ tối ưu hóa phần cứng (Giữ nguyên logic của bạn)
-        cat << 'EOF' >> $HOME/.config/sbuild/config.pl
-        my $opt_flags;
-        my $ld_flags;
-        my $rust_flags; 
-        my $deb_maint_options;
-
-        my $march_flag;
-        if ($version_tag eq "v3") {
-            $march_flag = "-march=x86-64-v3 -mtune=tigerlake -msha -maes -mpclmul -mrdrnd -mrdseed -mfsgsbase -mfxsr -mxsave -mxsaveopt -mxsavec -mxsaves -mclflushopt -mclwb -mshstk -mvaes -mvpclmulqdq -mgfni -mno-avx512f -mno-avx512vl -mno-avx512bw -mno-avx512dq -mno-avx512cd -mno-avx512ifma -mno-avx512vbmi -mno-avx512vbmi2 -mno-avx512vnni -mno-avx512bitalg -mno-avx512vpopcntdq -mno-avx512vp2intersect -mprefer-vector-width=256";
-            $rust_flags = "-C target-cpu=x86-64-v3 -C llvm-args=-mcpu=tigerlake -C target-feature=+aes,+pclmulqdq,+rdrand,+rdseed,+fsgsbase,+fxsr,+xsave,+xsaveopt,+xsavec,+xsaves,+clflushopt,+clwb,+shstk,+vaes,+vpclmulqdq,+gfni,-avx512f,-avx512vl,-avx512bw,-avx512dq,-avx512cd,-avx512ifma,-avx512vbmi,-avx512vbmi2,-avx512vnni,-avx512bitalg,-avx512vpopcntdq,-avx512vp2intersect";
-        }
-        elsif ($version_tag eq "v4") {
-            $march_flag = "-march=native -mprefer-vector-width=512";
-            $rust_flags = "-C target-cpu=native"; 
-        }
-        else {
-            $march_flag = "-march=x86-64-$version_tag -mtune=tigerlake";
-            $rust_flags = "-C target-cpu=x86-64-$version_tag -C llvm-args=-mcpu=tigerlake";
-        }
-
-        if ($use_lto eq "1") {
-            $opt_flags  = "-$base_flag $march_flag -flto=auto -fuse-linker-plugin";
-            $ld_flags   = "-Wl,-O1 -Wl,--as-needed -flto=auto";
-            $rust_flags = "$rust_flags -C linker-plugin-lto"; 
-            $deb_maint_options = "optimize=+lto";
-        } else {
-            $opt_flags  = "-$base_flag $march_flag";
-            $ld_flags   = "-Wl,-O1 -Wl,--as-needed";
-            $deb_maint_options = "optimize=-lto";
-        }
-
-        # Nạp cờ vào môi trường build ép buộc của sbuild
-        $build_environment = {
-            'DEB_CFLAGS_APPEND'       => $opt_flags,
-            'DEB_CXXFLAGS_APPEND'     => $opt_flags,
-            'DEB_LDFLAGS_APPEND'      => $ld_flags,
-            'RUSTFLAGS'               => $rust_flags, 
-            'DEB_BUILD_MAINT_OPTIONS' => $deb_maint_options,
+        \$build_environment = {
+            'RUSTFLAGS'               => '$rust_flags', 
+            'DEB_BUILD_MAINT_OPTIONS' => '$deb_maint_options',
             'CMAKE_CXX_SCAN_FOR_MODULES' => "OFF",
         };
         EOF
 
-        # 4. Inject các tùy chọn từ Ma trận JSON trực tiếp vào hash environment của Perl
+        # Nạp biến tùy chọn bổ sung từ ma trận JSON
         if [ -n "${{ matrix.DEB_BUILD_OPTIONS }}" ]; then
             echo '$build_environment->{"DEB_BUILD_OPTIONS"} = "'"${{ matrix.DEB_BUILD_OPTIONS }}"'";' >> $HOME/.config/sbuild/config.pl
         fi
@@ -138,7 +133,16 @@ jobs:
             echo '$build_environment->{"DEB_BUILD_PROFILES"} = "'"${{ matrix.DEB_BUILD_PROFILES }}"'";' >> $HOME/.config/sbuild/config.pl
         fi
 
-        # 5. Sinh cấu hình Hook tĩnh cho Repo bổ sung
+        # 5. 🌟 MOUNT ĐÈ cấu hình buildflags vào hệ thống chroot Unshare của sbuild
+        # Ánh xạ cả local-repo và file cấu hình đè buildflags của dpkg vào chroot
+        cat << 'EOF' >> $HOME/.config/sbuild/config.pl
+        our $bindmounts = [ 
+            "$ENV{HOME}/local-repo:/local-repo",
+            "$ENV{HOME}/debian-dpkg-config/buildflags.conf:/etc/dpkg/buildflags.conf"
+        ];
+        EOF
+
+        # 6. Thiết lập các lệnh Hook bổ sung danh mục Repo (Giữ nguyên logic của bạn)
         cat << 'EOF' >> $HOME/.config/sbuild/config.pl
         our $chroot_setup_commands = [
             'printf "Package: *\nPin: origin \"\"\nPin-Priority: 1001\n" > /etc/apt/preferences.d/pin-glibc',
@@ -170,12 +174,13 @@ jobs:
             echo "            'apt-get update'," >> $HOME/.config/sbuild/config.pl
         fi
 
-        # Kết thúc file hợp lệ với giá trị chân lý của Perl
         echo "];" >> $HOME/.config/sbuild/config.pl
         echo "1;" >> $HOME/.config/sbuild/config.pl
 
-        echo "📸 KIỂM TRA FILE CẤU HÌNH SBUILD HOÀN CHỈNH:"
+        echo "📸 KIỂM TRA FILE CẤU HÌNH SBUILD SAU CÙNG:"
         cat $HOME/.config/sbuild/config.pl
+        echo "📸 KIỂM TRA FILE BUILDFLAGS ĐÈ HỆ THỐNG:"
+        cat $HOME/debian-dpkg-config/buildflags.conf
 
     - name: Download Source and Dynamic Versioning via Host/Apt
       run: |
