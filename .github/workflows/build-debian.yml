@@ -78,29 +78,39 @@ jobs:
 
     - name: Download Source and Dynamic Versioning via Host/Apt
       run: |
-        # 1. Thêm trực tiếp kho lưu trữ mã nguồn deb-src của Debian Trixie vào máy host Ubuntu
-        sudo sh -c 'echo "deb-src [trusted=yes] http://deb.debian.org/debian trixie main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/trixie-src.list'
+        # 1. Khai báo kho lưu trữ tạm thời với cờ [trusted=yes] để bỏ qua bước kiểm tra khóa trên Host Ubuntu
+        sudo sh -c 'echo "deb-src [trusted=yes] http://debian.org trixie main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/trixie-src.list'
         
-        # 2. Cập nhật cơ sở dữ liệu apt của máy host để ghi nhận kho lưu trữ mới
+        # 2. Cập nhật lại cơ sở dữ liệu apt để nhận diện cấu trúc tệp nguồn mới
         sudo apt-get update
         
-        # 3. Tạo không gian làm việc sạch ngoài workspace của Host
+        # 3. Tạo không gian làm việc cô lập trên máy Host
         mkdir -p $GITHUB_WORKSPACE/debian-build-env && cd $GITHUB_WORKSPACE/debian-build-env
         
-        # Tải mã nguồn sạch của gói từ kho Debian Trixie vừa cấu hình
+        # 4. Tải mã nguồn của gói (Ví dụ: bubblewrap) từ kho lưu trữ
         apt-get source ${{ matrix.source }}
         
-        SRC_DIR=""
+        # 5. Xác định chính xác thư mục chứa mã nguồn vừa tải về
+        DETECTED_DIR=""
         for d in */; do
             if [ -f "${d}debian/changelog" ]; then
-                SRC_DIR="${d%/}"
+                DETECTED_DIR="${d%/}"
                 break
             fi
         done
 
-        if [ -z "$SRC_DIR" ]; then
+        if [ -z "$DETECTED_DIR" ]; then
             echo "❌ Không tìm thấy thư mục đóng gói Debian chuẩn!" >&2
             exit 1
+        fi
+
+        # Extract tên gói và phiên bản gốc (Upstream Version) để ép chuẩn hóa tên thư mục cho dpkg-source
+        UPSTREAM_VERSION=$(dpkg-parsechangelog -l "${DETECTED_DIR}/debian/changelog" -S Version | sed -E 's/^[0-9]+://' | cut -d'-' -f1 | cut -d'+' -f1)
+        SRC_DIR="${{ matrix.source }}-${UPSTREAM_VERSION}"
+
+        # Nếu tên thư mục thực tế không trùng với tên chuẩn, tiến hành đổi tên để tránh lỗi 'cannot stat directory'
+        if [ "$DETECTED_DIR" != "$SRC_DIR" ]; then
+            mv "$DETECTED_DIR" "$SRC_DIR"
         fi
         
         cd "$SRC_DIR"
@@ -117,7 +127,7 @@ jobs:
             local apt_clean_opts=(-o "Dir::Etc::preferences=/dev/null" -o "Dir::Etc::preferencesparts=/dev/null" -o "Dir::Etc::sourceparts=/dev/null")
             local search_list="$src_name"
             
-            # Đồng bộ số phiên bản mặc định
+            # Sử dụng số phiên bản lấy từ changelog gốc làm mốc nền
             full_ver="$local_changelog_ver"
             
             local epoch=""
@@ -137,7 +147,8 @@ jobs:
         export DEBFULLNAME="Cường Trần"
         dch --force-bad-version --v "$DYNAMIC_VERSION" "Automated Debian unshare chroot rebuild for ${{ matrix.v }}."
         
-        # Sinh tệp bản dựng .dsc mới ngay trên máy host
+        # 6. Khởi tạo và kết xuất ra file đặc tả .dsc mới một cách an toàn trên máy host
+        cd $GITHUB_WORKSPACE/debian-build-env
         dpkg-source -b "$SRC_DIR"
         
         echo "📸 Kiểm tra các tệp tin nguồn đích thực tại workspace máy host:"
