@@ -2,6 +2,7 @@
 # CẤU HÌNH TRUNG TÂM TỐI ƯU HÓA HỆ THỐNG SBUILD THẾ HỆ MỚI (UNSHARE)
 # =========================================================================
 $chroot_mode = 'unshare';
+$chroot_builder = 'mmdebstrap';
 $build_dep_resolver = 'apt';
 
 # 1. ĐỌC CẤU HÌNH ĐỘNG TỪ BIẾN MÔI TRƯỜNG DO SCRIPT BASH TRUYỀN VÀO
