@@ -165,6 +165,19 @@ jobs:
         echo "📸 Kiểm tra các tệp tin nguồn đích thực tại workspace máy host:"
         ls -la $GITHUB_WORKSPACE/debian-build-env/
 
+    - name: Whitelist Environment Variables for sbuild
+      run: |
+        mkdir -p $HOME/.config/sbuild
+        # Tạo file chứa danh sách các biến môi trường được phép giữ lại khi sbuild chạy
+        cat << 'PERL' > $HOME/.config/sbuild/sbuild.conf
+        our $environment_filter = [
+            'PATH', 'DEB_BUILD_OPTIONS', 'DEB_BUILD_PROFILES', 
+            'DEB_CFLAGS_APPEND', 'DEB_CXXFLAGS_APPEND',
+            'LTO', 'VERSION_TAG', 'OPT_FLAG'
+        ];
+        1;
+        PERL
+
     - name: Build Package via sbuild (Unshare Native Mode)
       run: |
         cd $GITHUB_WORKSPACE/debian-build-env/
