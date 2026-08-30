@@ -69,7 +69,6 @@ jobs:
     - name: Deploy Custom config.pl & Inject Dynamic Environment
       run: |
         mkdir -p $HOME/.config/sbuild
-        mkdir -p $HOME/debian-dpkg-config
         
         # 1. Khởi tạo cấu hình sbuild cơ bản ban đầu
         cat << 'EOF' > $HOME/.config/sbuild/config.pl
@@ -77,14 +76,14 @@ jobs:
         $build_dep_resolver = 'apt';
         $unshare_mmdebstrap_auto_create = 1; 
         $unshare_mmdebstrap_keep_tarball = 1;
+        our $bindmounts = [ "$ENV{HOME}/local-repo:/local-repo" ];
         EOF
 
-        # 2. Sinh biến Perl từ ma trận JSON để tính toán cờ tối ưu trên Host
+        # 2. Đọc biến ma trận lấy cờ tối ưu hóa để đưa vào Hook
         my_lto="${{ matrix.lto }}"
         my_v="${{ matrix.v }}"
         my_flag="${{ matrix.flag }}"
         
-        # Thiết lập cờ kiến trúc phần cứng chip
         if [ "$my_v" = "v3" ]; then
             march_flag="-march=x86-64-v3 -mtune=tigerlake -msha -maes -mpclmul -mrdrnd -mrdseed -mfsgsbase -mfxsr -mxsave -mxsaveopt -mxsavec -mxsaves -mclflushopt -mclwb -mshstk -mvaes -mvpclmulqdq -mgfni -mno-avx512f -mno-avx512vl -mno-avx512bw -mno-avx512dq -mno-avx512cd -mno-avx512ifma -mno-avx512vbmi -mno-avx512vbmi2 -mno-avx512vnni -mno-avx512bitalg -mno-avx512vpopcntdq -mno-avx512vp2intersect -mprefer-vector-width=256"
             rust_flags="-C target-cpu=x86-64-v3 -C llvm-args=-mcpu=tigerlake -C target-feature=+aes,+pclmulqdq,+rdrand,+rdseed,+fsgsbase,+fxsr,+xsave,+xsaveopt,+xsavec,+xsaves,+clflushopt,+clwb,+shstk,+vaes,+vpclmulqdq,+gfni,-avx512f,-avx512vl,-avx512bw,-avx512dq,-avx512cd,-avx512ifma,-avx512vbmi,-avx512vbmi2,-avx512vnni,-avx512bitalg,-avx512vpopcntdq,-avx512vp2intersect"
@@ -96,7 +95,6 @@ jobs:
             rust_flags="-C target-cpu=x86-64-$my_v -C llvm-args=-mcpu=tigerlake"
         fi
 
-        # Thiết lập cấu hình LTO và tối ưu hóa tối đa cờ liên kết
         if [ "$my_lto" = "1" ]; then
             opt_flags="-$my_flag $march_flag -flto=auto -fuse-linker-plugin"
             ld_flags="-Wl,-O1 -Wl,--as-needed -flto=auto"
@@ -108,15 +106,7 @@ jobs:
             deb_maint_options="optimize=-lto"
         fi
 
-        # 3. 🌟 PHƯƠNG PHÁP FIX CHÍ MẠNG: Khởi tạo file buildflags.conf để ép cấu hình hệ thống dpkg
-        # File này sẽ đè trực tiếp lên toàn bộ cấu trúc biên dịch của Apt/Meson/Make
-        cat << EOF > $HOME/debian-dpkg-config/buildflags.conf
-        APPEND CFLAGS $opt_flags
-        APPEND CXXFLAGS $opt_flags
-        APPEND LDFLAGS $ld_flags
-        EOF
-
-        # 4. Ghi đè bộ biến môi trường bắt buộc vào config.pl của sbuild để bảo lưu cờ Rust và Maint
+        # 3. Ép biến môi trường toàn cục cho sbuild
         cat << EOF >> $HOME/.config/sbuild/config.pl
         \$build_environment = {
             'RUSTFLAGS'               => '$rust_flags', 
@@ -125,7 +115,6 @@ jobs:
         };
         EOF
 
-        # Nạp biến tùy chọn bổ sung từ ma trận JSON
         if [ -n "${{ matrix.DEB_BUILD_OPTIONS }}" ]; then
             echo '$build_environment->{"DEB_BUILD_OPTIONS"} = "'"${{ matrix.DEB_BUILD_OPTIONS }}"'";' >> $HOME/.config/sbuild/config.pl
         fi
@@ -133,16 +122,8 @@ jobs:
             echo '$build_environment->{"DEB_BUILD_PROFILES"} = "'"${{ matrix.DEB_BUILD_PROFILES }}"'";' >> $HOME/.config/sbuild/config.pl
         fi
 
-        # 5. 🌟 MOUNT ĐÈ cấu hình buildflags vào hệ thống chroot Unshare của sbuild
-        # Ánh xạ cả local-repo và file cấu hình đè buildflags của dpkg vào chroot
-        cat << 'EOF' >> $HOME/.config/sbuild/config.pl
-        our $bindmounts = [ 
-            "$ENV{HOME}/local-repo:/local-repo",
-            "$ENV{HOME}/debian-dpkg-config/buildflags.conf:/etc/dpkg/buildflags.conf"
-        ];
-        EOF
-
-        # 6. Thiết lập các lệnh Hook bổ sung danh mục Repo (Giữ nguyên logic của bạn)
+        # 4. 🌟 CHIẾN THUẬT DUY NHẤT ĐỂ THẮNG MESON: Tạo Compiler Wrapper thông qua chroot_setup_commands
+        # Lệnh này sẽ tạo ra file thực thi đánh lừa hệ thống, ép cờ của bạn vào CUỐI CÙNG của lệnh cc/gcc/g++
         cat << 'EOF' >> $HOME/.config/sbuild/config.pl
         our $chroot_setup_commands = [
             'printf "Package: *\nPin: origin \"\"\nPin-Priority: 1001\n" > /etc/apt/preferences.d/pin-glibc',
@@ -152,6 +133,25 @@ jobs:
             'echo "deb-src http://deb.debian.org/debian-security trixie-security main non-free-firmware contrib non-free" >> /etc/apt/sources.list.d/trixie.list',
         EOF
 
+        # Sinh mã wrapper cho trình biên dịch thực tế chèn cứng cờ tối ưu hóa của bạn
+        echo "            'mkdir -p /usr/local/sbin'," >> $HOME/.config/sbuild/config.pl
+        
+        # Tạo wrapper cho cc
+        echo "            'echo \"#!/bin/sh\" > /usr/local/sbin/cc'," >> $HOME/.config/sbuild/config.pl
+        echo "            'echo \"exec /usr/bin/cc \\\ \"\\\$@\\\" $opt_flags $ld_flags\" >> /usr/local/sbin/cc'," >> $HOME/.config/sbuild/config.pl
+        echo "            'chmod +x /usr/local/sbin/cc'," >> $HOME/.config/sbuild/config.pl
+
+        # Tạo wrapper cho gcc
+        echo "            'echo \"#!/bin/sh\" > /usr/local/sbin/gcc'," >> $HOME/.config/sbuild/config.pl
+        echo "            'echo \"exec /usr/bin/gcc \\\ \"\\\$@\\\" $opt_flags $ld_flags\" >> /usr/local/sbin/gcc'," >> $HOME/.config/sbuild/config.pl
+        echo "            'chmod +x /usr/local/sbin/gcc'," >> $HOME/.config/sbuild/config.pl
+
+        # Tạo wrapper cho g++
+        echo "            'echo \"#!/bin/sh\" > /usr/local/sbin/g++'," >> $HOME/.config/sbuild/config.pl
+        echo "            'echo \"exec /usr/bin/g++ \\\ \"\\\$@\\\" $opt_flags $ld_flags\" >> /usr/local/sbin/g++'," >> $HOME/.config/sbuild/config.pl
+        echo "            'chmod +x /usr/local/sbin/g++'," >> $HOME/.config/sbuild/config.pl
+
+        # Cấu hình kiểm tra backports
         if [ "${{ matrix.is_bp }}" = "1" ]; then
             cat << 'EOF' >> $HOME/.config/sbuild/config.pl
             'echo "deb http://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/bp-sources.list',
@@ -177,10 +177,8 @@ jobs:
         echo "];" >> $HOME/.config/sbuild/config.pl
         echo "1;" >> $HOME/.config/sbuild/config.pl
 
-        echo "📸 KIỂM TRA FILE CẤU HÌNH SBUILD SAU CÙNG:"
+        echo "📸 KIỂM TRA FILE CẤU HÌNH SBUILD KHÓA CHẾ ĐỘ WRAPPER:"
         cat $HOME/.config/sbuild/config.pl
-        echo "📸 KIỂM TRA FILE BUILDFLAGS ĐÈ HỆ THỐNG:"
-        cat $HOME/debian-dpkg-config/buildflags.conf
 
     - name: Download Source and Dynamic Versioning via Host/Apt
       run: |
