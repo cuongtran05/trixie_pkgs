@@ -79,7 +79,7 @@ jobs:
         our $bindmounts = [ "$ENV{HOME}/local-repo:/local-repo" ];
         EOF
 
-        # 2. Đọc biến ma trận lấy cờ tối ưu hóa để đưa vào Hook
+        # 2. Đọc biến ma trận lấy cờ tối ưu hóa trên Host
         my_lto="${{ matrix.lto }}"
         my_v="${{ matrix.v }}"
         my_flag="${{ matrix.flag }}"
@@ -106,9 +106,11 @@ jobs:
             deb_maint_options="optimize=-lto"
         fi
 
-        # 3. Ép biến môi trường toàn cục cho sbuild
+        # 3. ÉP BIẾN MÔI TRƯỜNG TOÀN CỤC VÀ TUYẾN ĐƯỜNG PATH CHO SBUILD
+        # Ép đặt /usr/local/bin lên đầu PATH của phiên build để chặn đầu Ninja/Meson
         cat << EOF >> $HOME/.config/sbuild/config.pl
         \$build_environment = {
+            'PATH'                    => '/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
             'RUSTFLAGS'               => '$rust_flags', 
             'DEB_BUILD_MAINT_OPTIONS' => '$deb_maint_options',
             'CMAKE_CXX_SCAN_FOR_MODULES' => "OFF",
@@ -122,8 +124,7 @@ jobs:
             echo '$build_environment->{"DEB_BUILD_PROFILES"} = "'"${{ matrix.DEB_BUILD_PROFILES }}"'";' >> $HOME/.config/sbuild/config.pl
         fi
 
-        # 4. 🌟 CHIẾN THUẬT DUY NHẤT ĐỂ THẮNG MESON: Tạo Compiler Wrapper thông qua chroot_setup_commands
-        # Lệnh này sẽ tạo ra file thực thi đánh lừa hệ thống, ép cờ của bạn vào CUỐI CÙNG của lệnh cc/gcc/g++
+        # 4. Tạo các lệnh Hook để triển khai file Wrapper vào /usr/local/bin
         cat << 'EOF' >> $HOME/.config/sbuild/config.pl
         our $chroot_setup_commands = [
             'printf "Package: *\nPin: origin \"\"\nPin-Priority: 1001\n" > /etc/apt/preferences.d/pin-glibc',
@@ -133,25 +134,25 @@ jobs:
             'echo "deb-src http://deb.debian.org/debian-security trixie-security main non-free-firmware contrib non-free" >> /etc/apt/sources.list.d/trixie.list',
         EOF
 
-        # Sinh mã wrapper cho trình biên dịch thực tế chèn cứng cờ tối ưu hóa của bạn
-        echo "            'mkdir -p /usr/local/sbin'," >> $HOME/.config/sbuild/config.pl
+        # Chuyển hướng vị trí ghi wrapper sang /usr/local/bin (Nơi user thường có quyền đọc và thực thi trong PATH)
+        echo "            'mkdir -p /usr/local/bin'," >> $HOME/.config/sbuild/config.pl
         
         # Tạo wrapper cho cc
-        echo "            'echo \"#!/bin/sh\" > /usr/local/sbin/cc'," >> $HOME/.config/sbuild/config.pl
-        echo "            'echo \"exec /usr/bin/cc \\\ \"\\\$@\\\" $opt_flags $ld_flags\" >> /usr/local/sbin/cc'," >> $HOME/.config/sbuild/config.pl
-        echo "            'chmod +x /usr/local/sbin/cc'," >> $HOME/.config/sbuild/config.pl
+        echo "            'echo \"#!/bin/sh\" > /usr/local/bin/cc'," >> $HOME/.config/sbuild/config.pl
+        echo "            'echo \"exec /usr/bin/cc \\\$@ $opt_flags $ld_flags\" >> /usr/local/bin/cc'," >> $HOME/.config/sbuild/config.pl
+        echo "            'chmod 755 /usr/local/bin/cc'," >> $HOME/.config/sbuild/config.pl
 
         # Tạo wrapper cho gcc
-        echo "            'echo \"#!/bin/sh\" > /usr/local/sbin/gcc'," >> $HOME/.config/sbuild/config.pl
-        echo "            'echo \"exec /usr/bin/gcc \\\ \"\\\$@\\\" $opt_flags $ld_flags\" >> /usr/local/sbin/gcc'," >> $HOME/.config/sbuild/config.pl
-        echo "            'chmod +x /usr/local/sbin/gcc'," >> $HOME/.config/sbuild/config.pl
+        echo "            'echo \"#!/bin/sh\" > /usr/local/bin/gcc'," >> $HOME/.config/sbuild/config.pl
+        echo "            'echo \"exec /usr/bin/gcc \\\$@ $opt_flags $ld_flags\" >> /usr/local/bin/gcc'," >> $HOME/.config/sbuild/config.pl
+        echo "            'chmod 755 /usr/local/bin/gcc'," >> $HOME/.config/sbuild/config.pl
 
         # Tạo wrapper cho g++
-        echo "            'echo \"#!/bin/sh\" > /usr/local/sbin/g++'," >> $HOME/.config/sbuild/config.pl
-        echo "            'echo \"exec /usr/bin/g++ \\\ \"\\\$@\\\" $opt_flags $ld_flags\" >> /usr/local/sbin/g++'," >> $HOME/.config/sbuild/config.pl
-        echo "            'chmod +x /usr/local/sbin/g++'," >> $HOME/.config/sbuild/config.pl
+        echo "            'echo \"#!/bin/sh\" > /usr/local/bin/g++'," >> $HOME/.config/sbuild/config.pl
+        echo "            'echo \"exec /usr/bin/g++ \\\$@ $opt_flags $ld_flags\" >> /usr/local/bin/g++'," >> $HOME/.config/sbuild/config.pl
+        echo "            'chmod 755 /usr/local/bin/g++'," >> $HOME/.config/sbuild/config.pl
 
-        # Cấu hình kiểm tra backports
+        # Cấu hình kiểm tra repo backports
         if [ "${{ matrix.is_bp }}" = "1" ]; then
             cat << 'EOF' >> $HOME/.config/sbuild/config.pl
             'echo "deb http://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/bp-sources.list',
@@ -177,7 +178,7 @@ jobs:
         echo "];" >> $HOME/.config/sbuild/config.pl
         echo "1;" >> $HOME/.config/sbuild/config.pl
 
-        echo "📸 KIỂM TRA FILE CẤU HÌNH SBUILD KHÓA CHẾ ĐỘ WRAPPER:"
+        echo "📸 KIỂM TRA FILE CẤU HÌNH SBUILD PATH CHẶN ĐẦU MESON:"
         cat $HOME/.config/sbuild/config.pl
 
     - name: Download Source and Dynamic Versioning via Host/Apt
